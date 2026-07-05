@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Projects — OpenRouter Agents</title>
+    <style>
+      :root {
+        --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+        --dim: #8b949e; --accent: #58a6ff; --good: #3fb950; --warn: #d29922;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+      header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+      h1 { margin: 0; font-size: 18px; }
+      a.back { color: var(--accent); text-decoration: none; font-size: 14px; }
+      .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+      main { display: grid; grid-template-columns: 260px 300px 1fr; height: calc(100vh - 61px); }
+      .col { border-right: 1px solid var(--border); overflow-y: auto; padding: 10px; }
+      .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); margin: 6px 8px 10px; }
+      .item { padding: 9px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+      .item:hover { background: var(--panel); }
+      .item.active { background: var(--panel); border-color: var(--accent); }
+      .item .t { font-weight: 600; font-size: 14px; word-break: break-word; }
+      .item .s { color: var(--dim); font-size: 12px; margin-top: 2px; word-break: break-all; }
+      .transcript { padding: 16px 22px; overflow-y: auto; }
+      .msg { margin-bottom: 14px; }
+      .msg .role { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 3px; }
+      .msg.user .role { color: var(--accent); }
+      .msg.assistant .role { color: var(--good); }
+      .msg .body { white-space: pre-wrap; word-break: break-word; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+      .empty { color: var(--dim); padding: 30px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="back" href="/">← Models</a>
+      <h1>Projects &amp; History</h1>
+      <span id="hint" style="color: var(--dim); font-size: 13px;"></span>
+    </header>
+    <main>
+      <div class="col" id="projectsCol"><h2>Projects</h2><div id="projects"></div></div>
+      <div class="col" id="sessionsCol"><h2>Sessions</h2><div id="sessions"><div class="empty">Pick a project</div></div></div>
+      <div class="transcript" id="transcript"><div class="empty">Pick a session to view its history</div></div>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      const when = (d) => (d ? new Date(d).toLocaleString() : "");
+      let curProject = null, curSession = null;
+
+      async function loadProjects() {
+        const r = await (await fetch("/api/projects")).json();
+        if (r.error) { $("hint").textContent = "DB not connected: " + r.error; }
+        const list = r.projects || [];
+        if (!list.length) { $("projects").innerHTML = '<div class="empty">No projects yet.<br>Run <b>coder</b> in a folder.</div>'; return; }
+        $("projects").innerHTML = list.map((p) =>
+          `<div class="item" data-id="${p.id}">
+             <div class="t">${esc(p.name)}</div>
+             <div class="s mono">${esc(p.path)}</div>
+             <div class="s">${p.sessions} session(s) · ${when(p.last_used_at)}</div>
+           </div>`).join("");
+        $("projects").querySelectorAll(".item").forEach((el) =>
+          el.addEventListener("click", () => selectProject(Number(el.dataset.id), el)));
+      }
+
+      async function selectProject(id, el) {
+        curProject = id;
+        document.querySelectorAll("#projects .item").forEach((x) => x.classList.remove("active"));
+        el.classList.add("active");
+        $("transcript").innerHTML = '<div class="empty">Pick a session to view its history</div>';
+        const r = await (await fetch(`/api/projects/${id}/sessions`)).json();
+        const list = r.sessions || [];
+        if (!list.length) { $("sessions").innerHTML = '<div class="empty">No sessions yet.</div>'; return; }
+        $("sessions").innerHTML = list.map((s) =>
+          `<div class="item" data-id="${s.id}">
+             <div class="t">${esc(s.title || "(untitled)")}</div>
+             <div class="s">#${s.id} · ${s.messages} msgs · ${when(s.updated_at)}</div>
+             <div class="s mono">${esc(s.model || "")}</div>
+           </div>`).join("");
+        $("sessions").querySelectorAll(".item").forEach((x) =>
+          x.addEventListener("click", () => selectSession(Number(x.dataset.id), x)));
+      }
+
+      async function selectSession(id, el) {
+        curSession = id;
+        document.querySelectorAll("#sessions .item").forEach((x) => x.classList.remove("active"));
+        el.classList.add("active");
+        const r = await (await fetch(`/api/sessions/${id}`)).json();
+        const msgs = r.messages || [];
+        $("transcript").innerHTML = msgs.length
+          ? msgs.map((m) => `<div class="msg ${m.role}"><div class="role">${m.role}</div><div class="body">${esc(m.content)}</div></div>`).join("")
+          : '<div class="empty">No messages in this session.</div>';
+      }
+
+      loadProjects();
+    </script>
+  </body>
+</html>

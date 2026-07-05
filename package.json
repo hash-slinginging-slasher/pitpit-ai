@@ -1,0 +1,29 @@
+{
+  "name": "openrouter-coding-agent",
+  "version": "0.1.0",
+  "description": "A CLI coding agent on OpenRouter + a web UI to pick which model it uses.",
+  "type": "module",
+  "bin": {
+    "coder": "bin/coder.mjs"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "dev": "tsx watch src/cli.ts",
+    "web": "tsx web/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openrouter/agent": "^0.4.0",
+    "glob": "^13.0.6",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.22.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

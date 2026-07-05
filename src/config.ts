@@ -1,0 +1,274 @@
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { release, version } from 'os';
+
+/**
+ * Detect the host OS + shell so the agent generates commands that actually run
+ * here. On Windows the shell tool uses cmd.exe, so the model must use `del`/`dir`
+ * rather than `rm`/`ls`.
+ */
+export function osInfo(): { os: string; shell: string; guidance: string } {
+  if (process.platform === 'win32') {
+    const shell = process.env.COMSPEC || 'cmd.exe';
+    let label = 'Windows';
+    try {
+      const v = version(); // e.g. "Windows 11 Pro"
+      const build = Number(release().split('.')[2] || 0);
+      label = v && /windows/i.test(v) ? v : build >= 22000 ? 'Windows 11' : 'Windows 10';
+    } catch {
+      /* keep default */
+    }
+    return {
+      os: label,
+      shell,
+      guidance:
+        `You are on ${label}. The shell tool runs commands through cmd.exe, so use native ` +
+        'Windows commands: `dir` (not ls), `del` (not rm), `rmdir /s /q` to remove a folder, ' +
+        '`type` (not cat), `copy`, `move`, `ren`, `mkdir`, `findstr` (not grep). Do NOT use Unix ' +
+        'commands like rm, ls, cat, touch, or grep — they are not recognized in cmd. Paths use ' +
+        'backslashes. For reading, writing, editing, searching, or listing files, prefer the ' +
+        'built-in tools (file_read, file_write, file_edit, list_dir, glob, grep) — they are ' +
+        'cross-platform and do not depend on the shell.',
+    };
+  }
+  const shell = process.env.SHELL || '/bin/sh';
+  const label = process.platform === 'darwin' ? 'macOS' : 'Linux';
+  return {
+    os: label,
+    shell,
+    guidance:
+      `You are on ${label} using a POSIX shell (${shell}); standard Unix commands apply ` +
+      '(ls, rm, cat, grep, etc.). For file reads/writes/edits/search, prefer the built-in tools.',
+  };
+}
+
+/** The three agent kinds, each with its own ordered failover chain of models. */
+export type AgentKind = 'coder' | 'image' | 'doc';
+export const AGENT_KINDS: AgentKind[] = ['coder', 'image', 'doc'];
+
+/** Ordered model chains per agent: index 0 is primary, the rest are failovers. */
+export type AgentChains = Record<AgentKind, string[]>;
+
+export interface AgentConfig {
+  apiKey: string;
+  agents: AgentChains;
+  name: string;
+  theme: string;
+  systemPrompt: string;
+  maxSteps: number;
+  maxCost: number;
+  sessionDir: string;
+  /** Auto-commit file changes to git after each turn (per project). Default true. */
+  autoCommit: boolean;
+}
+
+/** Merge a patch into agent.config.json, preserving all other fields. */
+export function updateConfigFile(patch: Record<string, unknown>): void {
+  let file: any = {};
+  try {
+    if (existsSync(CONFIG_PATH)) file = readJsonFile(CONFIG_PATH);
+  } catch {
+    /* start fresh */
+  }
+  Object.assign(file, patch);
+  writeFileSync(CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
+}
+
+/** The primary (first) model of an agent's chain, or '' if none configured. */
+export function primaryModel(config: AgentConfig, kind: AgentKind = 'coder'): string {
+  return config.agents[kind]?.[0] ?? '';
+}
+
+/**
+ * The app's install directory (one level up from src/). Config and .env are
+ * resolved from here — NOT from process.cwd() — so you can launch the agent
+ * from inside any project directory and it still finds the shared model + key.
+ */
+export const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+
+/** Path to the config file the web UI reads/writes. Shared source of truth for the model. */
+export const CONFIG_PATH = resolve(APP_DIR, 'agent.config.json');
+
+/** Path to the secrets file (API keys) written by the web UI's Settings panel. Gitignored. */
+export const SECRETS_PATH = resolve(APP_DIR, 'secrets.json');
+
+/** Parse a JSON file, tolerating a UTF-8 BOM (Windows editors/PowerShell add one). */
+function readJsonFile(path: string): any {
+  let text = readFileSync(path, 'utf-8');
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // strip BOM
+  return JSON.parse(text);
+}
+
+/** Read all stored secrets (API keys). Missing/invalid file → {}. */
+export function readSecrets(): Record<string, string> {
+  try {
+    if (existsSync(SECRETS_PATH)) return readJsonFile(SECRETS_PATH);
+  } catch {
+    /* ignore malformed file */
+  }
+  return {};
+}
+
+/** Merge and persist secrets written from the Settings UI. */
+export function saveSecrets(patch: Record<string, string>): void {
+  const next = { ...readSecrets(), ...patch };
+  writeFileSync(SECRETS_PATH, JSON.stringify(next, null, 2) + '\n');
+}
+
+/**
+ * Resolve the OpenRouter API key. Precedence: OPENROUTER_API_KEY env var (if set)
+ * overrides, otherwise the key saved via the Settings UI (secrets.json).
+ */
+export function readApiKey(): string {
+  return process.env.OPENROUTER_API_KEY || readSecrets().openrouterApiKey || '';
+}
+
+/** Resolve the Postgres connection string: DATABASE_URL env overrides the Settings-saved value. */
+export function readDatabaseUrl(): string {
+  return process.env.DATABASE_URL || readSecrets().databaseUrl || '';
+}
+
+/**
+ * Prefix that marks a model as a local llama.cpp (OpenAI-compatible) server rather
+ * than an OpenRouter model. e.g. "local/Ornith-1.0-9B". Local models are routed to
+ * runLocalAgent (chat/completions) instead of the OpenRouter Responses API.
+ */
+export const LOCAL_MODEL_PREFIX = 'local/';
+
+/** True if this model id targets the local llama.cpp server. */
+export function isLocalModel(model: string): boolean {
+  return model.startsWith(LOCAL_MODEL_PREFIX);
+}
+
+/**
+ * Base URL of the local OpenAI-compatible server (llama.cpp `llama-server`).
+ * Precedence: LLAMA_BASE_URL env → secrets.json `localBaseUrl` → default :8080.
+ * Always normalized to end at the `/v1` root (no trailing slash).
+ */
+export function localBaseUrl(): string {
+  const raw = process.env.LLAMA_BASE_URL || readSecrets().localBaseUrl || 'http://localhost:8080/v1';
+  return raw.replace(/\/+$/, '');
+}
+
+const DEFAULTS: AgentConfig = {
+  apiKey: '',
+  agents: { coder: [], image: [], doc: [] },
+  name: 'OpenRouter Coding Agent',
+  theme: 'default',
+  systemPrompt: [
+    'You are a coding assistant with tools to read, write, edit (file_edit / multi_edit),',
+    'delete, move, copy files and make directories; search (glob, grep, list_dir); run shell',
+    'commands; read documents (view_document: pdf, xlsx, csv, text) and images (view_image);',
+    'fetch web pages (web_fetch), search the web, and generate images (generate_image).',
+    '',
+    'Current working directory: {cwd}',
+    'Operating system: {os}',
+    '{shellGuidance}',
+    '',
+    'Guidelines:',
+    '- Use your tools proactively. Explore the codebase to find answers instead of asking the user.',
+    '- Keep working until the task is fully resolved before responding.',
+    '- Do not guess or make up information — use your tools to verify.',
+    '- Be concise and direct.',
+    '- Show file paths clearly when working with files.',
+    '- Prefer the grep and glob tools over shell commands for file search.',
+    '- When editing code, make minimal targeted changes consistent with the existing style.',
+    '- Use the dedicated file tools (delete_file, move_file, copy_file, make_dir) instead of shell.',
+    '- For several edits to one file, use multi_edit in a single call.',
+    '- To read a PDF, spreadsheet, or CSV, use view_document; for a screenshot/image use view_image.',
+    '- To read a specific web page or docs, use web_fetch; to search the web, use web_search.',
+  ].join('\n'),
+  maxSteps: 25,
+  maxCost: 1.0,
+  sessionDir: '.sessions',
+  autoCommit: true,
+};
+
+/** Load a minimal .env file (KEY=VALUE lines) into process.env if present. */
+function loadDotEnv() {
+  const envPath = resolve(APP_DIR, '.env');
+  if (!existsSync(envPath)) return;
+  for (const raw of readFileSync(envPath, 'utf-8').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = val;
+  }
+}
+
+export function loadConfig(
+  overrides: Partial<AgentConfig> = {},
+  opts?: { skipApiKey?: boolean },
+): AgentConfig {
+  loadDotEnv(); // optional legacy support; not required
+  let config: AgentConfig = { ...DEFAULTS, agents: { coder: [], image: [], doc: [] } };
+
+  if (existsSync(CONFIG_PATH)) {
+    const file = readJsonFile(CONFIG_PATH);
+    config = { ...config, ...file, agents: normalizeAgents(file) };
+  }
+
+  // API key comes from the Settings UI (secrets.json), or an env var override.
+  config.apiKey = readApiKey();
+  if (process.env.AGENT_MODEL) config.agents.coder = [process.env.AGENT_MODEL];
+  if (process.env.AGENT_MAX_STEPS) config.maxSteps = Number(process.env.AGENT_MAX_STEPS);
+  if (process.env.AGENT_MAX_COST) config.maxCost = Number(process.env.AGENT_MAX_COST);
+
+  config = { ...config, ...overrides };
+
+  // Make the agent OS-aware: substitute the detected OS + shell guidance.
+  const info = osInfo();
+  config.systemPrompt = config.systemPrompt.replace('{os}', info.os).replace('{shellGuidance}', info.guidance);
+
+  if (!config.apiKey && !opts?.skipApiKey) {
+    throw new Error(
+      'No OpenRouter API key set. Run the web UI (start.bat), open Settings (top-right), and paste your key from https://openrouter.ai/keys',
+    );
+  }
+  return config;
+}
+
+/** Build the agent chains from a raw config file, migrating the legacy single `model`. */
+function normalizeAgents(file: any): AgentChains {
+  const out: AgentChains = { coder: [], image: [], doc: [] };
+  const a = file?.agents ?? {};
+  for (const kind of AGENT_KINDS) {
+    if (Array.isArray(a[kind])) out[kind] = a[kind].filter((m: unknown): m is string => typeof m === 'string');
+  }
+  // Legacy: a single `model` string becomes the coder primary if no coder chain yet.
+  if (out.coder.length === 0 && typeof file?.model === 'string' && file.model) out.coder = [file.model];
+  return out;
+}
+
+/** Read just the agent chains from the config file on disk (used by the web server + CLI watch). */
+export function readAgents(): AgentChains {
+  try {
+    if (existsSync(CONFIG_PATH)) return normalizeAgents(readJsonFile(CONFIG_PATH));
+  } catch {
+    /* ignore */
+  }
+  return { coder: [], image: [], doc: [] };
+}
+
+/** Persist one agent's ordered model chain to the config file, preserving other fields. */
+export function saveAgentChain(kind: AgentKind, models: string[]): AgentChains {
+  let file: any = {};
+  try {
+    if (existsSync(CONFIG_PATH)) file = readJsonFile(CONFIG_PATH);
+  } catch {
+    /* start fresh */
+  }
+  const agents = normalizeAgents(file);
+  agents[kind] = models.filter((m) => typeof m === 'string' && m.length > 0);
+  file.agents = agents;
+  delete file.model; // drop the legacy field once migrated
+  writeFileSync(CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
+  return agents;
+}
