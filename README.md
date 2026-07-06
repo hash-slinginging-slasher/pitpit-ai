@@ -10,10 +10,33 @@ SDK (tool loop, streaming, cost/step limits).
 
 ## Setup
 
+On Windows, just run:
+
+```bat
+setup.bat
+```
+
+`setup.bat` installs everything that isn't already present and skips whatever is — so it's safe
+to run once or re-run anytime. Each step is guarded by an "already installed?" check:
+
+| Step | Installs if missing |
+| --- | --- |
+| **Node.js** | LTS build via `winget` (`OpenJS.NodeJS.LTS`) |
+| **Dependencies** | `npm install` |
+| **`coder` CLI** | `npm link` (global `coder` command) |
+| **GitHub CLI** | `winget install GitHub.cli` |
+| **GitHub auth** | `gh auth login` (opens a browser) + `gh auth setup-git` so `git push` works |
+
+<details>
+<summary>Manual setup (or non-Windows)</summary>
+
 ```bash
 npm install
 npm link          # installs a global `coder` command
 ```
+
+GitHub CLI/auth are only needed if you plan to push; install `gh` and run `gh auth login`.
+</details>
 
 Then start the web UI (`start.bat`) and click **Settings** (top-right) to paste your API key
 from https://openrouter.ai/keys. It's saved locally to `secrets.json` (gitignored) and used by
