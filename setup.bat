@@ -12,11 +12,23 @@ echo ============================================================
 echo   pitpit-ai setup
 echo ============================================================
 
-REM --- Node.js (hard prerequisite, cannot continue without it) ---
+REM --- Node.js ---
 where node >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] Node.js is not installed.
-  echo         Install the LTS build from https://nodejs.org/ and re-run setup.bat.
+  if exist "%ProgramFiles%\nodejs\node.exe" (
+    REM Installed but not on this session's PATH yet.
+    set "PATH=%ProgramFiles%\nodejs;%PATH%"
+  ) else (
+    echo [..] Installing Node.js LTS ^(winget^)...
+    winget install --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent
+    if errorlevel 1 goto :fail
+    REM winget does not refresh PATH for the running shell; add it manually.
+    set "PATH=%ProgramFiles%\nodejs;%PATH%"
+  )
+)
+where node >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] Node.js still not found after install. Open a new terminal and re-run setup.bat.
   goto :fail
 )
 for /f "delims=" %%v in ('node --version') do echo [ok] Node.js %%v
