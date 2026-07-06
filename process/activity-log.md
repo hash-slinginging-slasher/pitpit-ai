@@ -1,3 +1,15 @@
+## 2026-07-06
+
+### Git repo initialized and pushed to GitHub
+**Files Changed:** none (repo setup only)
+
+- Initialized git in `D:\openrouter\app`, added remote `origin` → https://github.com/hash-slinginging-slasher/pitpit-ai.git
+- Initial commit (40 files) pushed to `main`; `secrets.json`, `.env`, `node_modules/` excluded via existing `.gitignore`
+
+**Deployment:** Not deployed (repo setup)
+
+---
+
 ## 2026-07-05
 
 ### Fix: memory prompt trap (reasoning leakage) + answer-from-memory
