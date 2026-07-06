@@ -7,6 +7,7 @@
     "coder": "bin/coder.mjs"
   },
   "scripts": {
+    "setup": "npm install && node scripts/setup.mjs",
     "start": "tsx src/cli.ts",
     "dev": "tsx watch src/cli.ts",
     "web": "tsx web/server.ts",

@@ -8,12 +8,13 @@ import { dirname, resolve } from 'path';
 
 const appDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const cli = resolve(appDir, 'src', 'cli.ts');
-const isWin = process.platform === 'win32';
-const tsx = resolve(appDir, 'node_modules', '.bin', isWin ? 'tsx.cmd' : 'tsx');
+// Run tsx's JS entry directly with node instead of the .bin/tsx.cmd shim. This
+// avoids needing shell:true, so user-supplied args are passed as a safe argv
+// array (no shell escaping/injection concerns).
+const tsx = resolve(appDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
-const child = spawn(tsx, [cli, ...process.argv.slice(2)], {
+const child = spawn(process.execPath, [tsx, cli, ...process.argv.slice(2)], {
   stdio: 'inherit',
   cwd: process.cwd(), // the project the user launched from — what the agent edits
-  shell: isWin, // .cmd shims need a shell on Windows
 });
 child.on('exit', (code) => process.exit(code ?? 0));
