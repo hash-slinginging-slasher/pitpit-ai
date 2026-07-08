@@ -7,6 +7,17 @@ REM app always gets the port (avoids EADDRINUSE conflicts with other apps).
 set "PORT=7000"
 cd /d "%~dp0"
 
+REM Ensure dependencies (tsx, pg, zod, @openrouter/agent, ...) are installed.
+if not exist "node_modules\" (
+  echo Installing dependencies ^(first run^)...
+  call npm install
+  if errorlevel 1 (
+    echo [ERROR] npm install failed. Run setup.bat and retry.
+    endlocal
+    exit /b 1
+  )
+)
+
 echo Freeing port %PORT% if in use...
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r /c:":%PORT% .*LISTENING"') do (
   echo   killing PID %%p on port %PORT%
