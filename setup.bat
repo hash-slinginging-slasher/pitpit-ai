@@ -105,13 +105,15 @@ echo ============================================================
 goto :end
 
 REM --- ensure_winget: bootstrap the App Installer (winget) if it is missing. ---
-REM Fresh images like Windows Sandbox ship without winget. Download the App
-REM Installer bundle and its dependencies and register them for the user.
+REM Fresh images like Windows Sandbox ship without winget. Use Microsoft's
+REM documented method: install the Microsoft.WinGet.Client module from PSGallery
+REM and let Repair-WinGetPackageManager pull winget + all its dependencies. This
+REM avoids hardcoded GitHub asset URLs, which 404 whenever a "latest" release rolls.
 :ensure_winget
 where winget >nul 2>&1
 if not errorlevel 1 exit /b 0
-echo [..] winget not found. Bootstrapping App Installer ^(downloads a few packages^)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; $t=$env:TEMP; try { Invoke-WebRequest -Uri https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx -OutFile $t\vclibs.appx; Invoke-WebRequest -Uri https://github.com/microsoft/microsoft-ui-xaml/releases/latest/download/Microsoft.UI.Xaml.2.8.x64.appx -OutFile $t\xaml.appx; Invoke-WebRequest -Uri https://aka.ms/getwinget -OutFile $t\winget.msixbundle; Add-AppxPackage $t\vclibs.appx; Add-AppxPackage $t\xaml.appx; Add-AppxPackage $t\winget.msixbundle } catch { Write-Host $_.Exception.Message; exit 1 }"
+echo [..] winget not found. Bootstrapping App Installer ^(this can take a minute^)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null; Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue; Install-Module -Name Microsoft.WinGet.Client -Force -Scope CurrentUser -Repository PSGallery; Repair-WinGetPackageManager -Latest } catch { Write-Host $_.Exception.Message; exit 1 }"
 if errorlevel 1 (
   echo [ERROR] Could not install winget automatically. Install "App Installer" from the Microsoft Store, then re-run setup.bat.
   exit /b 1
