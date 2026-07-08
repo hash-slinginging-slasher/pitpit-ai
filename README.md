@@ -129,22 +129,54 @@ much better experience — smooth scrollback, search, proper glyphs — run `cod
 Terminal** or the VS Code integrated terminal. The CLI uses ASCII-only output so it stays
 readable even in the legacy console.
 
-## Projects & history (Postgres)
+## Projects & memory (Postgres)
 
-Optionally connect a local PostgreSQL database to track the projects you work in and save
-conversation history.
+Optionally connect a local PostgreSQL database to track the projects you work in, save full
+conversation history, and keep an auto-maintained per-project memory.
 
-1. In the web UI **Settings**, paste a **Postgres connection URL**
-   (`postgres://user:pass@localhost:5432/openrouter_agent`) and click **Test connection** — that
-   also creates the tables. (Or set a `DATABASE_URL` env var.)
-2. Now every time you run `coder` in a folder, that project is registered, and each conversation
-   is saved as a session. In the CLI: `/sessions` lists this project's saved sessions and
-   `/resume <id>` reloads one to continue it.
-3. Browse everything in the web UI: click **📁 Projects** (top of the page) to see projects →
-   sessions → full transcripts.
+### 1. Get a PostgreSQL server
+
+You need an actual Postgres **server** running (pgAdmin alone is only a GUI client — it does not
+include a server). On Windows the simplest route is winget:
+
+```powershell
+winget install -e --id PostgreSQL.PostgreSQL.17 --override "--mode unattended --unattendedmodeui minimal --superpassword YOUR_PASSWORD --serverport 5432 --enable-components server,commandlinetools"
+```
+
+This installs Postgres 17 as a Windows service (`postgresql-x64-17`) that auto-starts on boot and
+listens on `localhost:5432`. Then create the database:
+
+```powershell
+$env:PGPASSWORD = 'YOUR_PASSWORD'
+& 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -U postgres -h localhost -c "CREATE DATABASE openrouter_agent"
+```
+
+(You can also use a Docker container or a hosted provider like Neon/Supabase — anything that gives
+you a connection URL works.)
+
+### 2. Point the app at it
+
+Set the connection URL one of two ways (either works; `DATABASE_URL` takes precedence):
+
+- **`.env` file** (gitignored) in the app directory:
+  ```
+  DATABASE_URL=postgres://postgres:YOUR_PASSWORD@localhost:5432/openrouter_agent
+  ```
+- **Web UI Settings** — paste the same URL and click **Test connection**.
+
+Either way, the first successful connection **creates the tables automatically**. Clicking
+**Test connection** in the UI is the easiest way to verify.
+
+### 3. Use it
+
+- Every time you run `coder` in a folder, that project is registered, and each conversation is
+  saved as a session. In the CLI: `/sessions` lists this project's saved sessions and
+  `/resume <id>` reloads one to continue it.
+- Browse everything in the web UI: click **📁 Projects** (top of the page) to see projects →
+  sessions → full transcripts.
 
 The DB is optional — without it the CLI works exactly as before, just without saved history.
-Tables: `projects`, `sessions`, `messages` (created automatically).
+Tables (created automatically): `projects`, `sessions`, `messages`, `project_memory`.
 
 ## How it fits together
 
