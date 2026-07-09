@@ -107,20 +107,23 @@ function shortName(model: string): string {
   return (slash === -1 ? model : model.slice(slash + 1)).replace(/:free$/, ' (free)');
 }
 
-function banner(config: AgentConfig, chain: string[]) {
+function banner(config: AgentConfig, chain: string[], activeIndex = 0) {
   const width = Math.min(process.stdout.columns || 60, 60);
   const line = C.gray + '-'.repeat(width) + C.reset;
   console.log();
   console.log(line);
   console.log(`  ${C.bold}${config.name}${C.reset}`);
   if (chain.length) {
-    console.log(`  ${C.dim}coder 1${C.reset}  ${C.cyan}${chain[0]}${C.reset}`);
-    chain.slice(1).forEach((m, i) => console.log(`  ${C.dim}coder ${i + 2}${C.reset}  ${C.gray}${m}${C.reset}`));
+    chain.forEach((m, i) => {
+      const active = i === activeIndex;
+      const mark = active ? `${C.green}▶${C.reset}` : ' ';
+      console.log(`  ${mark} ${C.dim}coder ${i + 1}${C.reset}  ${active ? C.cyan : C.gray}${m}${C.reset}`);
+    });
   } else {
     console.log(`  ${C.yellow}no coder model configured - add one in the web UI (start.bat)${C.reset}`);
   }
   console.log(line);
-  console.log(`  ${C.dim}Models are set from the web UI. /help, /exit.${C.reset}`);
+  console.log(`  ${C.dim}Models are set from the web UI. /coder-<n> to switch, /help, /exit.${C.reset}`);
   console.log();
 }
 
@@ -217,6 +220,12 @@ function makeRenderer(showReasoning: () => boolean) {
 async function main() {
   const config = loadConfig({}, { skipApiKey: true }); // key checked per-turn so UI edits apply live
   let chain = readCoderChain();
+  // Which model in the chain to start from this session (0 = primary). /coder-<n>
+  // switches it; the turn runs chain.slice(activeIndex) so the rest stay as failover.
+  let activeIndex = 0;
+  const clampActive = () => {
+    if (activeIndex >= chain.length) activeIndex = 0;
+  };
   applyTheme(config.theme || 'default');
   setWindowTitle(config.name); // name the terminal window on launch
 
@@ -281,7 +290,7 @@ async function main() {
 
   /** Print the banner + the context/tip line, exactly as on initial load. */
   function printIntro(withContext: boolean) {
-    banner(config, chain);
+    banner(config, chain, activeIndex);
     if (withContext) {
       console.log(`  ${C.dim}Loaded project context from ${CONTEXT_FILE}.${C.reset}\n`);
     } else {
@@ -291,18 +300,23 @@ async function main() {
 
   printIntro(hasContext);
 
-  const promptText = () => `${C.cyan}${shortName(chain[0] ?? '')}${C.reset} ${C.green}>${C.reset} `;
+  const promptText = () => {
+    const label = shortName(chain[activeIndex] ?? chain[0] ?? '');
+    const pos = chain.length > 1 && activeIndex > 0 ? `${C.dim}[coder ${activeIndex + 1}]${C.reset} ` : '';
+    return `${pos}${C.cyan}${label}${C.reset} ${C.green}>${C.reset} `;
+  };
 
   // Follow the coder chain chosen in the web UI. The UI writes agent.config.json;
   // we watch it and update the chain live — no need to type model names here.
   const watcher = watch(CONFIG_PATH, () => {
     const next = readCoderChain();
     if (next.join('|') !== chain.join('|')) {
-      const primaryChanged = next[0] !== chain[0];
+      const primaryChanged = next[activeIndex] !== chain[activeIndex];
       chain = next;
+      clampActive();
       if (primaryChanged) {
         process.stdout.write(
-          `\n${C.magenta}>> coder model -> ${shortName(chain[0] ?? '')}${C.reset} ${C.dim}(set from UI)${C.reset}\n`,
+          `\n${C.magenta}>> coder model -> ${shortName(chain[activeIndex] ?? '')}${C.reset} ${C.dim}(set from UI)${C.reset}\n`,
         );
       }
       rl.setPrompt(promptText());
@@ -419,7 +433,13 @@ async function main() {
 
   while (true) {
     chain = readCoderChain(); // always use whatever the UI has set
-    const input = (await question(rl, promptText())).trim();
+    clampActive(); // keep the /coder-<n> selection valid if the UI changed the chain
+    let input: string;
+    try {
+      input = (await question(rl, promptText())).trim();
+    } catch {
+      break; // stdin closed (EOF / piped input ended) — exit cleanly instead of crashing
+    }
     if (!input) continue;
 
     if (input === '/exit' || input.toLowerCase() === 'exit') {
@@ -432,6 +452,7 @@ async function main() {
         `\n  ${C.bold}Commands${C.reset}\n` +
           `  ${C.cyan}/init${C.reset}          write ${CONTEXT_FILE} (skips if it exists; ${C.reset}${C.cyan}/init force${C.reset} regenerates)\n` +
           `  ${C.cyan}/active${C.reset}        show the coder model + failover chain (from the web UI)\n` +
+          `  ${C.cyan}/coder-<n>${C.reset}     switch which model in the chain runs (e.g. ${C.reset}${C.cyan}/coder-2${C.reset}; failover continues from there)\n` +
           `  ${C.cyan}/sessions${C.reset}      list saved sessions for this project (needs DB)\n` +
           `  ${C.cyan}/resume <id>${C.reset}   reload a past session and continue it\n` +
           `  ${C.cyan}/rename <name>${C.reset} rename this CLI + terminal window (persists)\n` +
@@ -518,7 +539,7 @@ async function main() {
         applyTheme(arg);
         config.theme = arg;
         updateConfigFile({ theme: arg });
-        banner(config, chain); // reprint in the new colors
+        banner(config, chain, activeIndex); // reprint in the new colors
         console.log(`  ${C.green}theme set to ${arg}.${C.reset}\n`);
       } else {
         console.log(`  ${C.yellow}unknown theme "${arg}".${C.reset} ${C.dim}options: ${Object.keys(THEMES).join(', ')}${C.reset}\n`);
@@ -582,10 +603,39 @@ async function main() {
       if (!chain.length) {
         console.log(`  ${C.yellow}no coder model configured - add one in the web UI${C.reset}\n`);
       } else {
-        chain.forEach((m, i) =>
-          console.log(`  ${C.dim}coder ${i + 1}${C.reset}  ${i === 0 ? C.cyan : C.gray}${m}${C.reset}`),
-        );
-        console.log();
+        chain.forEach((m, i) => {
+          const active = i === activeIndex;
+          console.log(`  ${active ? `${C.green}▶${C.reset}` : ' '} ${C.dim}coder ${i + 1}${C.reset}  ${active ? C.cyan : C.gray}${m}${C.reset}`);
+        });
+        console.log(`  ${C.dim}${C.reset}${C.cyan}/coder-<n>${C.reset}${C.dim} to switch which one runs.${C.reset}\n`);
+      }
+      continue;
+    }
+    // /coder, /coder-<n>, /coder <n>: switch which model in the chain runs (session only).
+    const coderMatch = input.match(/^\/coder(?:[-\s]?(\d+))?$/i);
+    if (coderMatch) {
+      clampActive();
+      if (!chain.length) {
+        console.log(`  ${C.yellow}no coder model configured - add one in the web UI${C.reset}\n`);
+      } else if (!coderMatch[1]) {
+        chain.forEach((m, i) => {
+          const active = i === activeIndex;
+          console.log(`  ${active ? `${C.green}▶${C.reset}` : ' '} ${C.dim}coder ${i + 1}${C.reset}  ${active ? C.cyan : C.gray}${shortName(m)}${C.reset}`);
+        });
+        console.log(`  ${C.dim}usage: ${C.reset}${C.cyan}/coder-<n>${C.reset}${C.dim} (e.g. /coder-2)${C.reset}\n`);
+      } else {
+        const n = Number(coderMatch[1]);
+        if (n < 1 || n > chain.length) {
+          console.log(`  ${C.yellow}no coder ${n} — the chain has ${chain.length} model${chain.length === 1 ? '' : 's'}.${C.reset}\n`);
+        } else {
+          activeIndex = n - 1;
+          rl.setPrompt(promptText());
+          const rest = chain.length - activeIndex - 1;
+          console.log(
+            `  ${C.green}switched to coder ${n}${C.reset} ${C.cyan}${shortName(chain[activeIndex])}${C.reset}` +
+              `${rest > 0 ? ` ${C.dim}(${rest} failover${rest === 1 ? '' : 's'} after it)${C.reset}` : ''}\n`,
+          );
+        }
       }
       continue;
     }
@@ -604,10 +654,13 @@ async function main() {
       console.log(`\n${C.yellow}  No coder model configured. Open the web UI (start.bat) and add one.${C.reset}\n`);
       continue;
     }
+    // Run from the /coder-<n> selection: the active model is primary, later models
+    // remain as failover. (Default activeIndex 0 = the whole chain.)
+    const activeChain = chain.slice(activeIndex);
     // Ensure a key is available (may have just been added in Settings). Only demand the
-    // OpenRouter key if the chain actually contains an OpenRouter model — a chain of only
+    // OpenRouter key if the active chain contains an OpenRouter model — a chain of only
     // local/NVIDIA/GitHub/cli models resolves its own auth per provider.
-    const needsOpenRouterKey = chain.some((m) => providerOf(m) === 'openrouter');
+    const needsOpenRouterKey = activeChain.some((m) => providerOf(m) === 'openrouter');
     try {
       config.apiKey = loadConfig({}, { skipApiKey: !needsOpenRouterKey }).apiKey;
     } catch (err: any) {
@@ -634,14 +687,16 @@ async function main() {
 
     try {
       const agentInput = isInit ? taskInput : messages.length > 1 ? messages : input;
-      const result = await runAgentChain(config, chain, agentInput, {
+      const result = await runAgentChain(config, activeChain, agentInput, {
         onEvent: (e) => {
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
           renderer.handle(e);
         },
         onFailover: ({ to, index, error }) =>
           console.log(
-            `\n${C.yellow}  ! coder ${index} failing over -> ${shortName(to)}${C.reset} ${C.dim}(${error})${C.reset}`,
+            // index is the source's 1-based position in the active sub-chain; offset it
+            // by activeIndex to show the absolute coder number.
+            `\n${C.yellow}  ! coder ${activeIndex + index} failing over -> ${shortName(to)}${C.reset} ${C.dim}(${error})${C.reset}`,
           ),
       });
       renderer.done();

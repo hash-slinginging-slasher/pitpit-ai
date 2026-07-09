@@ -4,10 +4,11 @@
   "maxCost": 1,
   "agents": {
     "coder": [
+      "cli/jules",
       "nvidia/bytedance/seed-oss-36b-instruct",
       "google/gemma-4-26b-a4b-it:free",
-      "cli/jules",
-      "cli/claude"
+      "cli/claude",
+      "cli/gemini"
     ],
     "image": [],
     "doc": []
