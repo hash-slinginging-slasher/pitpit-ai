@@ -152,6 +152,18 @@ function question(rl: Interface, prompt: string): Promise<string> {
  * flood the terminal. Toggle full reasoning with `showReasoning`. Uses ASCII
  * glyphs so it renders cleanly in the classic Windows console.
  */
+/** Whimsical "still working" words that rotate under the spinner on long turns. */
+const THINKING_WORDS = [
+  'thinking', 'goblinating', 'reticulating splines', 'summoning daemons',
+  'herding electrons', 'buttering the bits', 'consulting the oracle',
+  'untangling the yarn', 'brewing tokens', 'bamboozling the CPU',
+  'spelunking the codebase', 'negotiating with the model', 'polishing pixels',
+  'wrangling gremlins', 'percolating', 'noodling', 'conjuring', 'vibing',
+  'poking the hamster wheel', 'aligning the flux', 'greasing the gears',
+  'counting to potato', 'rerouting the tubes', 'feeding the goblins',
+];
+const pickWord = () => THINKING_WORDS[Math.floor(Math.random() * THINKING_WORDS.length)];
+
 function makeRenderer(showReasoning: () => boolean) {
   let atLineStart = true;
   const frames = ['-', '\\', '|', '/'];
@@ -172,10 +184,21 @@ function makeRenderer(showReasoning: () => boolean) {
       process.stdout.write('\n');
       atLineStart = true;
     }
-    process.stdout.write(`${C.gray}${frames[0]} thinking${C.reset}`);
+    const started = Date.now();
+    let word = pickWord();
+    let tick = 0;
+    const paint = () => {
+      const secs = Math.floor((Date.now() - started) / 1000);
+      const elapsed = secs >= 2 ? ` ${C.dim}(${secs}s)${C.reset}` : '';
+      // \x1b[K clears to end of line so a shorter word doesn't leave stale characters.
+      process.stdout.write(`\r\x1b[K${C.gray}${frames[frame]} ${word}…${C.reset}${elapsed}`);
+    };
+    paint();
     spinner = setInterval(() => {
       frame = (frame + 1) % frames.length;
-      process.stdout.write(`\r${C.gray}${frames[frame]} thinking${C.reset}`);
+      // Swap to a new word roughly every ~3.6s (30 frames × 120ms) so it stays lively.
+      if (++tick % 30 === 0) word = pickWord();
+      paint();
     }, 120);
   }
 
