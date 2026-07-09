@@ -261,8 +261,8 @@
       // can mix models from any of them. `endpoint` null = no catalog, manual-add only.
       const SOURCES = [
         { key: "openrouter", label: "OpenRouter", endpoint: "/api/models", prefix: "", manual: "e.g. qwen/qwen3-coder", note: "OpenRouter models. Add a key in Settings." },
-        { key: "nvidia", label: "NVIDIA", endpoint: "/api/models/nvidia", prefix: "nvidia/", manual: "e.g. moonshotai/kimi-k2-instruct", note: "build.nvidia.com (OpenAI-compatible). Needs the NVIDIA key in Settings. Stored as <code>nvidia/&lt;model&gt;</code>." },
-        { key: "github", label: "GitHub", endpoint: "/api/models/github", prefix: "github/", manual: "e.g. openai/gpt-4o", note: "GitHub Models (OpenAI-compatible). Needs a GitHub token in Settings. Stored as <code>github/&lt;model&gt;</code>." },
+        { key: "nvidia", label: "NVIDIA build", endpoint: "/api/models/nvidia", prefix: "nvidia-build/", manual: "e.g. moonshotai/kimi-k2-instruct", note: "build.nvidia.com (OpenAI-compatible). Needs the NVIDIA key in Settings. Stored as <code>nvidia-build/&lt;model&gt;</code>. (A plain <code>nvidia/…</code> id is an OpenRouter model, not this.)" },
+        { key: "github", label: "GitHub", endpoint: "/api/models/github", prefix: "github-models/", manual: "e.g. openai/gpt-4o", note: "GitHub Models (OpenAI-compatible). Needs a GitHub token in Settings. Stored as <code>github-models/&lt;model&gt;</code>." },
         { key: "local", label: "Local", endpoint: null, prefix: "local/", manual: "Local llama.cpp model, e.g. Ornith-1.0-9B", note: "Runs against a local <code>llama-server</code> at <code id='localUrlHint2'>http://localhost:8080/v1</code> — no key or cost. Stored as <code>local/&lt;name&gt;</code>." },
         { key: "cli", label: "Auth CLI", endpoint: "/api/cli/status", prefix: "cli/", manual: "", note: "Uses a subscription CLI's own login (Claude Code, Codex, Gemini, Jules). Stored as <code>cli/&lt;name&gt;</code>." },
       ];

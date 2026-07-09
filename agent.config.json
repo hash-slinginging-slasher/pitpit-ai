@@ -4,11 +4,7 @@
   "maxCost": 1,
   "agents": {
     "coder": [
-      "cli/jules",
-      "nvidia/bytedance/seed-oss-36b-instruct",
-      "google/gemma-4-26b-a4b-it:free",
-      "cli/claude",
-      "cli/gemini"
+      "nvidia/nemotron-nano-9b-v2:free"
     ],
     "image": [],
     "doc": []

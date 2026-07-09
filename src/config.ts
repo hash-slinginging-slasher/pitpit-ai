@@ -164,9 +164,14 @@ export const LOCAL_MODEL_PREFIX = 'local/';
  * array of model ids, so a single chain can mix routers — routing is per-model.
  *   (bare id) / openrouter/  -> OpenRouter Responses SDK (default; back-compat)
  *   local/<name>             -> local llama.cpp (OpenAI-compatible), no key
- *   nvidia/<model>           -> build.nvidia.com (OpenAI-compatible), NVIDIA key
- *   github/<model>           -> GitHub Models (OpenAI-compatible), GitHub token
+ *   nvidia-build/<model>     -> build.nvidia.com (OpenAI-compatible), NVIDIA key
+ *   github-models/<model>    -> GitHub Models (OpenAI-compatible), GitHub token
  *   cli/claude|codex|gemini|jules -> a subscription CLI's backend via its OAuth token
+ *
+ * NOTE: the build.nvidia.com and GitHub routers use DISTINCT prefixes
+ * ("nvidia-build/", "github-models/") on purpose — OpenRouter namespaces its models
+ * by author, and "nvidia"/"cohere"/etc. are real OpenRouter authors. So a plain
+ * "nvidia/nemotron-..." is an OpenRouter model and must route there, not to NVIDIA build.
  */
 export type ProviderId =
   | 'openrouter'
@@ -181,8 +186,8 @@ export type ProviderId =
 /** Resolve the router for a model id from its prefix. Unknown/bare ids default to OpenRouter. */
 export function providerOf(model: string): ProviderId {
   if (model.startsWith('local/')) return 'local';
-  if (model.startsWith('nvidia/')) return 'nvidia';
-  if (model.startsWith('github/')) return 'github';
+  if (model.startsWith('nvidia-build/')) return 'nvidia';
+  if (model.startsWith('github-models/')) return 'github';
   if (model.startsWith('cli/claude')) return 'cli-claude';
   if (model.startsWith('cli/codex')) return 'cli-codex';
   if (model.startsWith('cli/gemini')) return 'cli-gemini';

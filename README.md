@@ -86,8 +86,8 @@ across different providers. Pick the router with the source selector above the m
 |--------|--------|------|------------|
 | *(none)* | **OpenRouter** | OpenRouter key | `qwen/qwen3-coder` |
 | `local/` | **Local llama.cpp** | none | `local/Ornith-1.0-9B` |
-| `nvidia/` | **NVIDIA build** ([build.nvidia.com](https://build.nvidia.com/)) | NVIDIA key | `nvidia/moonshotai/kimi-k2-instruct` |
-| `github/` | **GitHub Models** ([marketplace/models](https://github.com/marketplace/models)) | GitHub token | `github/openai/gpt-4o` |
+| `nvidia-build/` | **NVIDIA build** ([build.nvidia.com](https://build.nvidia.com/)) | NVIDIA key | `nvidia-build/moonshotai/kimi-k2-instruct` |
+| `github-models/` | **GitHub Models** ([marketplace/models](https://github.com/marketplace/models)) | GitHub token | `github-models/openai/gpt-4o` |
 | `cli/claude` | **Claude Code** subscription | its own login | `cli/claude` or `cli/claude/claude-opus-4-1` |
 | `cli/codex` | **OpenAI Codex** | its own login | `cli/codex` |
 | `cli/gemini` | **Gemini** | API key or CLI login | `cli/gemini` |
@@ -95,7 +95,9 @@ across different providers. Pick the router with the source selector above the m
 
 - **NVIDIA / GitHub** are OpenAI-compatible APIs. Add the key in **Settings** (or `NVIDIA_API_KEY`
   / `GITHUB_MODELS_TOKEN` env), then browse their catalog under the source selector, or paste a
-  model id into the manual add-by-id box.
+  model id into the manual add-by-id box. Their prefixes are `nvidia-build/` and `github-models/`
+  (deliberately distinct: OpenRouter namespaces models by author, so a plain `nvidia/…` or
+  `cohere/…` id is an **OpenRouter** model and routes there, not to NVIDIA build).
 - **Auth CLIs** reuse the CLI's *own* subscription login — no API key. Select the **Auth CLI**
   source to see install/login status per CLI. `cli/claude` reads the Claude Code OAuth token from
   `~/.claude/.credentials.json` (refreshing it as needed) and drives the agent's tools against the

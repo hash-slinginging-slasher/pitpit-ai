@@ -77,7 +77,7 @@ async function fetchNvidiaModels() {
   const r = await fetch(`${nvidiaBaseUrl()}/models`, { headers: { Authorization: `Bearer ${key}` } });
   if (!r.ok) throw new Error(`NVIDIA returned ${r.status}`);
   const body = (await r.json()) as { data: any[] };
-  return (body.data ?? []).map((m) => card(`nvidia/${m.id}`, { name: m.id, description: m.owned_by ? `owner: ${m.owned_by}` : '' }));
+  return (body.data ?? []).map((m) => card(`nvidia-build/${m.id}`, { name: m.id, description: m.owned_by ? `owner: ${m.owned_by}` : '' }));
 }
 
 /**
@@ -95,7 +95,7 @@ async function fetchGithubModels() {
   const list = (await r.json()) as any[];
   return (Array.isArray(list) ? list : []).map((m) => {
     const wire = m.id || (m.publisher && m.name ? `${m.publisher}/${m.name}` : m.name);
-    return card(`github/${wire}`, {
+    return card(`github-models/${wire}`, {
       name: m.name || wire,
       description: m.summary || m.description || (m.publisher ? `by ${m.publisher}` : ''),
       inputModalities: m.supported_input_modalities ?? [],
