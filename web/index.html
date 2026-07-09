@@ -372,7 +372,10 @@
             const hint = !c.installed
               ? `<div class="failover-note" style="margin:6px 0 0;">Installs <code>${pkg}</code>.</div>`
               : (!c.loggedIn && c.name !== "jules"
-                  ? `<div class="failover-note" style="margin:6px 0 0;">Sign in: run <code>${c.loginCmd}</code> in a terminal.</div>`
+                  ? `<div class="failover-note" style="margin:6px 0 0; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                       Sign in: <code>${c.loginCmd}</code>
+                       <button class="btn-ghost" data-copy="${c.loginCmd}" style="margin:0;padding:2px 8px;font-size:12px;">copy</button>
+                     </div>`
                   : "");
             return `
               <div class="card ${inChain ? "inchain" : ""}">
@@ -393,7 +396,21 @@
         $("grid").querySelectorAll("button[data-install]").forEach((b) =>
           b.addEventListener("click", () => installCli(b.dataset.install, b)),
         );
+        $("grid").querySelectorAll("button[data-copy]").forEach((b) =>
+          b.addEventListener("click", () => copyCmd(b.dataset.copy, b)),
+        );
         wireGridButtons();
+      }
+
+      async function copyCmd(text, btn) {
+        const orig = btn.textContent;
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = "copied ✓";
+        } catch (e) {
+          btn.textContent = "copy failed";
+        }
+        setTimeout(() => (btn.textContent = orig), 1200);
       }
 
       async function installCli(name, btn) {
