@@ -76,6 +76,38 @@ Open **http://localhost:7000**. First time: click **Settings** (top-right) and p
 OpenRouter key. Then search/filter the ~340 models (toggle *free only*), click **Use this
 model** — that becomes the **active** model (written to `agent.config.json`).
 
+## Routers (providers)
+
+The agent can reach several backends ("routers"). A model id's **prefix** decides where it goes,
+so a single **failover chain can mix routers** — put a free model first and a paid one as backup,
+across different providers. Pick the router with the source selector above the model grid.
+
+| Prefix | Router | Auth | Example id |
+|--------|--------|------|------------|
+| *(none)* | **OpenRouter** | OpenRouter key | `qwen/qwen3-coder` |
+| `local/` | **Local llama.cpp** | none | `local/Ornith-1.0-9B` |
+| `nvidia/` | **NVIDIA build** ([build.nvidia.com](https://build.nvidia.com/)) | NVIDIA key | `nvidia/moonshotai/kimi-k2-instruct` |
+| `github/` | **GitHub Models** ([marketplace/models](https://github.com/marketplace/models)) | GitHub token | `github/openai/gpt-4o` |
+| `cli/claude` | **Claude Code** subscription | its own login | `cli/claude` or `cli/claude/claude-opus-4-1` |
+| `cli/codex` | **OpenAI Codex** | its own login | `cli/codex` |
+| `cli/gemini` | **Gemini CLI** *(experimental)* | its own login | `cli/gemini` |
+| `cli/jules` | **Jules** *(experimental)* | its own login | `cli/jules` |
+
+- **NVIDIA / GitHub** are OpenAI-compatible APIs. Add the key in **Settings** (or `NVIDIA_API_KEY`
+  / `GITHUB_MODELS_TOKEN` env), then browse their catalog under the source selector, or paste a
+  model id into the manual add-by-id box.
+- **Auth CLIs** reuse the CLI's *own* subscription login — no API key. Select the **Auth CLI**
+  source to see install/login status per CLI. `cli/claude` reads the Claude Code OAuth token from
+  `~/.claude/.credentials.json` (refreshing it as needed) and drives the agent's tools against the
+  Anthropic Messages API. `cli/codex` works when Codex is logged in with an API key. `cli/gemini`
+  and `cli/jules` are scaffolded but not yet validated.
+
+> ⚠️ **Note on the Auth-CLI routers.** Using a subscription's OAuth token to drive a different
+> client against the vendor's private API is undocumented, can break when the vendor changes
+> things, and **may violate the product's Terms of Service** (accounts can be rate-limited or
+> flagged). It's your own account and your call. Reading the CLI credential file is sensitive, so
+> the first run may prompt you to approve it.
+
 ## 2. Code with it (CLI)
 
 ```bash

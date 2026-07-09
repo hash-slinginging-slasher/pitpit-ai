@@ -1,7 +1,7 @@
 import { createInterface, type Interface } from 'readline';
 import { watch, readFileSync, existsSync } from 'fs';
 import { resolve, basename } from 'path';
-import { loadConfig, readAgents, updateConfigFile, isLocalModel, CONFIG_PATH, type AgentConfig } from './config.js';
+import { loadConfig, readAgents, updateConfigFile, providerOf, CONFIG_PATH, type AgentConfig } from './config.js';
 import { runAgentChain, type ChatMessage, type AgentEvent } from './agent.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
@@ -604,11 +604,12 @@ async function main() {
       console.log(`\n${C.yellow}  No coder model configured. Open the web UI (start.bat) and add one.${C.reset}\n`);
       continue;
     }
-    // Ensure a key is available (may have just been added in Settings). A chain of
-    // only local llama.cpp models needs no OpenRouter key, so don't require one then.
-    const needsKey = chain.some((m) => !isLocalModel(m));
+    // Ensure a key is available (may have just been added in Settings). Only demand the
+    // OpenRouter key if the chain actually contains an OpenRouter model — a chain of only
+    // local/NVIDIA/GitHub/cli models resolves its own auth per provider.
+    const needsOpenRouterKey = chain.some((m) => providerOf(m) === 'openrouter');
     try {
-      config.apiKey = loadConfig({}, { skipApiKey: !needsKey }).apiKey;
+      config.apiKey = loadConfig({}, { skipApiKey: !needsOpenRouterKey }).apiKey;
     } catch (err: any) {
       console.log(`\n${C.yellow}  ${err.message}${C.reset}\n`);
       continue;

@@ -2,8 +2,16 @@ import { OpenRouter } from '@openrouter/agent';
 import type { Item } from '@openrouter/agent';
 import { stepCountIs, maxCost } from '@openrouter/agent/stop-conditions';
 import type { AgentConfig } from './config.js';
-import { isLocalModel } from './config.js';
-import { runLocalAgent } from './local-agent.js';
+import {
+  providerOf,
+  stripPrefix,
+  nvidiaBaseUrl,
+  githubBaseUrl,
+  readNvidiaKey,
+  readGithubToken,
+} from './config.js';
+import { runLocalAgent, runOpenAICompatibleAgent } from './local-agent.js';
+import { runCliAgent } from './providers/cli-agent.js';
 import { tools } from './tools/index.js';
 
 export type ChatMessage = { role: 'user' | 'assistant' | 'system'; content: string };
@@ -30,10 +38,30 @@ export async function runAgent(
   input: string | ChatMessage[],
   options?: RunOptions,
 ) {
-  // Local llama.cpp models don't speak the OpenRouter Responses API — run them
-  // through the chat/completions tool loop instead (no API key required).
-  if (isLocalModel(model)) {
+  // Route by the model id's provider prefix. Only bare/openrouter ids use the
+  // OpenRouter Responses SDK below; everything else has its own transport.
+  const provider = providerOf(model);
+  if (provider === 'local') {
     return runLocalAgent(config, model, input, options);
+  }
+  if (provider === 'nvidia') {
+    return runOpenAICompatibleAgent(
+      { baseUrl: nvidiaBaseUrl(), wireModel: stripPrefix(model), apiKey: readNvidiaKey() },
+      config,
+      input,
+      options,
+    );
+  }
+  if (provider === 'github') {
+    return runOpenAICompatibleAgent(
+      { baseUrl: githubBaseUrl(), wireModel: stripPrefix(model), apiKey: readGithubToken() },
+      config,
+      input,
+      options,
+    );
+  }
+  if (provider === 'cli-claude' || provider === 'cli-codex' || provider === 'cli-gemini' || provider === 'cli-jules') {
+    return runCliAgent(provider, config, model, input, options);
   }
 
   const client = new OpenRouter({ apiKey: config.apiKey });

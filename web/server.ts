@@ -2,8 +2,9 @@ import { createServer } from 'http';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, nvidiaBaseUrl, githubBaseUrl, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages } from '../src/db.js';
+import { cliStatuses } from '../src/providers/credentials.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 7000;
@@ -51,6 +52,58 @@ async function fetchModels() {
   }));
 }
 
+/** A model card in the shape the web grid expects, prefixed with its router id. */
+function card(id: string, extra: Partial<Record<string, unknown>> = {}) {
+  return {
+    id,
+    name: id,
+    context: 0,
+    promptPrice: 0,
+    completionPrice: 0,
+    inputModalities: [] as string[],
+    outputModalities: [] as string[],
+    description: '',
+    ...extra,
+  };
+}
+
+/**
+ * NVIDIA build catalog. Its OpenAI-compatible `GET /v1/models` lists model ids; we
+ * prefix them with `nvidia/` so they route correctly. Needs the NVIDIA key.
+ */
+async function fetchNvidiaModels() {
+  const key = readNvidiaKey();
+  if (!key) throw new Error('No NVIDIA API key set — add it in Settings.');
+  const r = await fetch(`${nvidiaBaseUrl()}/models`, { headers: { Authorization: `Bearer ${key}` } });
+  if (!r.ok) throw new Error(`NVIDIA returned ${r.status}`);
+  const body = (await r.json()) as { data: any[] };
+  return (body.data ?? []).map((m) => card(`nvidia/${m.id}`, { name: m.id, description: m.owned_by ? `owner: ${m.owned_by}` : '' }));
+}
+
+/**
+ * GitHub Models catalog. `GET https://models.github.ai/catalog/models` returns the
+ * marketplace list; ids route as `github/<publisher>/<name>`. Needs a GitHub token.
+ */
+async function fetchGithubModels() {
+  const token = readGithubToken();
+  if (!token) throw new Error('No GitHub token set — add it in Settings.');
+  const base = githubBaseUrl().replace(/\/inference$/, '');
+  const r = await fetch(`${base}/catalog/models`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+  });
+  if (!r.ok) throw new Error(`GitHub Models returned ${r.status}`);
+  const list = (await r.json()) as any[];
+  return (Array.isArray(list) ? list : []).map((m) => {
+    const wire = m.id || (m.publisher && m.name ? `${m.publisher}/${m.name}` : m.name);
+    return card(`github/${wire}`, {
+      name: m.name || wire,
+      description: m.summary || m.description || (m.publisher ? `by ${m.publisher}` : ''),
+      inputModalities: m.supported_input_modalities ?? [],
+      outputModalities: m.supported_output_modalities ?? [],
+    });
+  });
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
@@ -70,6 +123,32 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/config') {
       json(res, 200, { agents: readAgents(), hasKey: !!apiKeyNow() });
+      return;
+    }
+
+    // NVIDIA build catalog (prefixed nvidia/…). Returns { error } if no key / fetch fails.
+    if (req.method === 'GET' && url.pathname === '/api/models/nvidia') {
+      try {
+        json(res, 200, { models: await fetchNvidiaModels(), agents: readAgents(), hasKey: !!readNvidiaKey() });
+      } catch (e: any) {
+        json(res, 200, { models: [], agents: readAgents(), hasKey: !!readNvidiaKey(), error: e.message });
+      }
+      return;
+    }
+
+    // GitHub Models catalog (prefixed github/…). Returns { error } if no token / fetch fails.
+    if (req.method === 'GET' && url.pathname === '/api/models/github') {
+      try {
+        json(res, 200, { models: await fetchGithubModels(), agents: readAgents(), hasKey: !!readGithubToken() });
+      } catch (e: any) {
+        json(res, 200, { models: [], agents: readAgents(), hasKey: !!readGithubToken(), error: e.message });
+      }
+      return;
+    }
+
+    // Auth-CLI routers: install + login status (booleans only, never tokens).
+    if (req.method === 'GET' && url.pathname === '/api/cli/status') {
+      json(res, 200, { clis: cliStatuses(), agents: readAgents() });
       return;
     }
 
@@ -96,6 +175,8 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/settings') {
       const key = apiKeyNow();
       const dbUrl = readDatabaseUrl();
+      const nvidia = readNvidiaKey();
+      const github = readGithubToken();
       json(res, 200, {
         hasKey: !!key,
         keyMasked: maskKey(key),
@@ -104,29 +185,52 @@ const server = createServer(async (req, res) => {
         dbMasked: maskDbUrl(dbUrl),
         dbFromEnv: !!process.env.DATABASE_URL,
         localBaseUrl: localBaseUrl(),
+        hasNvidia: !!nvidia,
+        nvidiaMasked: maskKey(nvidia),
+        nvidiaFromEnv: !!process.env.NVIDIA_API_KEY,
+        hasGithub: !!github,
+        githubMasked: maskKey(github),
+        githubFromEnv: !!process.env.GITHUB_MODELS_TOKEN,
       });
       return;
     }
 
-    // Settings: save the OpenRouter API key and/or Postgres URL (written to secrets.json).
+    // Settings: save the OpenRouter/NVIDIA/GitHub keys and/or Postgres URL (secrets.json).
     if (req.method === 'POST' && url.pathname === '/api/settings') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const { openrouterApiKey, databaseUrl } = JSON.parse(body || '{}');
+      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken } = JSON.parse(body || '{}');
       const patch: Record<string, string> = {};
       if (typeof openrouterApiKey === 'string') patch.openrouterApiKey = openrouterApiKey.trim();
       if (typeof databaseUrl === 'string') patch.databaseUrl = databaseUrl.trim();
+      if (typeof nvidiaApiKey === 'string') patch.nvidiaApiKey = nvidiaApiKey.trim();
+      if (typeof githubToken === 'string') patch.githubToken = githubToken.trim();
       if (!Object.keys(patch).length) return json(res, 400, { error: 'nothing to save' });
       saveSecrets(patch);
       const key = apiKeyNow();
-      json(res, 200, { ok: true, hasKey: !!key, keyMasked: maskKey(key), hasDb: !!readDatabaseUrl(), dbMasked: maskDbUrl(readDatabaseUrl()) });
+      json(res, 200, {
+        ok: true,
+        hasKey: !!key,
+        keyMasked: maskKey(key),
+        hasDb: !!readDatabaseUrl(),
+        dbMasked: maskDbUrl(readDatabaseUrl()),
+        hasNvidia: !!readNvidiaKey(),
+        nvidiaMasked: maskKey(readNvidiaKey()),
+        hasGithub: !!readGithubToken(),
+        githubMasked: maskKey(readGithubToken()),
+      });
       return;
     }
 
     // Settings: reveal the full secrets so the user can copy/verify them.
     // Safe because the server binds to 127.0.0.1 only (see server.listen below).
     if (req.method === 'GET' && url.pathname === '/api/settings/reveal') {
-      json(res, 200, { openrouterApiKey: apiKeyNow(), databaseUrl: readDatabaseUrl() });
+      json(res, 200, {
+        openrouterApiKey: apiKeyNow(),
+        databaseUrl: readDatabaseUrl(),
+        nvidiaApiKey: readNvidiaKey(),
+        githubToken: readGithubToken(),
+      });
       return;
     }
 

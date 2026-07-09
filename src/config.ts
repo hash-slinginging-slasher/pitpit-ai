@@ -136,9 +136,96 @@ export function readDatabaseUrl(): string {
  */
 export const LOCAL_MODEL_PREFIX = 'local/';
 
+/**
+ * The "router" a model id targets, decided by its prefix. A failover chain is just an
+ * array of model ids, so a single chain can mix routers — routing is per-model.
+ *   (bare id) / openrouter/  -> OpenRouter Responses SDK (default; back-compat)
+ *   local/<name>             -> local llama.cpp (OpenAI-compatible), no key
+ *   nvidia/<model>           -> build.nvidia.com (OpenAI-compatible), NVIDIA key
+ *   github/<model>           -> GitHub Models (OpenAI-compatible), GitHub token
+ *   cli/claude|codex|gemini|jules -> a subscription CLI's backend via its OAuth token
+ */
+export type ProviderId =
+  | 'openrouter'
+  | 'local'
+  | 'nvidia'
+  | 'github'
+  | 'cli-claude'
+  | 'cli-codex'
+  | 'cli-gemini'
+  | 'cli-jules';
+
+/** Resolve the router for a model id from its prefix. Unknown/bare ids default to OpenRouter. */
+export function providerOf(model: string): ProviderId {
+  if (model.startsWith('local/')) return 'local';
+  if (model.startsWith('nvidia/')) return 'nvidia';
+  if (model.startsWith('github/')) return 'github';
+  if (model.startsWith('cli/claude')) return 'cli-claude';
+  if (model.startsWith('cli/codex')) return 'cli-codex';
+  if (model.startsWith('cli/gemini')) return 'cli-gemini';
+  if (model.startsWith('cli/jules')) return 'cli-jules';
+  if (model.startsWith('openrouter/')) return 'openrouter';
+  return 'openrouter';
+}
+
+/** Strip a known provider prefix, yielding the wire model name the backend expects. */
+export function stripPrefix(model: string): string {
+  const slash = model.indexOf('/');
+  const provider = providerOf(model);
+  // Bare OpenRouter ids (e.g. "qwen/qwen3-coder") keep their slash — only strip a
+  // leading, explicit router prefix.
+  if (provider === 'openrouter') return model.replace(/^openrouter\//, '');
+  return slash === -1 ? model : model.slice(slash + 1);
+}
+
 /** True if this model id targets the local llama.cpp server. */
 export function isLocalModel(model: string): boolean {
-  return model.startsWith(LOCAL_MODEL_PREFIX);
+  return providerOf(model) === 'local';
+}
+
+/** True if this model id targets a subscription-CLI router (cli/*). */
+export function isCliModel(model: string): boolean {
+  return providerOf(model).startsWith('cli-');
+}
+
+/** Base URL of the NVIDIA build OpenAI-compatible API (no trailing slash). */
+export function nvidiaBaseUrl(): string {
+  const raw = process.env.NVIDIA_BASE_URL || readSecrets().nvidiaBaseUrl || 'https://integrate.api.nvidia.com/v1';
+  return raw.replace(/\/+$/, '');
+}
+
+/** Base URL of the GitHub Models OpenAI-compatible inference API (no trailing slash). */
+export function githubBaseUrl(): string {
+  const raw = process.env.GITHUB_MODELS_BASE_URL || readSecrets().githubBaseUrl || 'https://models.github.ai/inference';
+  return raw.replace(/\/+$/, '');
+}
+
+/** Resolve the NVIDIA API key: NVIDIA_API_KEY env overrides the Settings-saved value. */
+export function readNvidiaKey(): string {
+  return process.env.NVIDIA_API_KEY || readSecrets().nvidiaApiKey || '';
+}
+
+/** Resolve the GitHub Models token: GITHUB_MODELS_TOKEN env overrides the Settings-saved value. */
+export function readGithubToken(): string {
+  return process.env.GITHUB_MODELS_TOKEN || readSecrets().githubToken || '';
+}
+
+/**
+ * Does this model id require a secret key that isn't currently available? Used by the
+ * CLI to decide whether to demand a key before a turn. Local + cli/* need no key here
+ * (cli/* resolve their own OAuth token at call time); OpenRouter/NVIDIA/GitHub do.
+ */
+export function modelMissingKey(model: string): boolean {
+  switch (providerOf(model)) {
+    case 'openrouter':
+      return !readApiKey();
+    case 'nvidia':
+      return !readNvidiaKey();
+    case 'github':
+      return !readGithubToken();
+    default:
+      return false; // local + cli/* handle their own auth
+  }
 }
 
 /**

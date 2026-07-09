@@ -20,9 +20,9 @@ import type { AgentEvent, ChatMessage } from './agent.js';
  */
 
 /** Only client tools can run locally — server tools (OpenRouter web_search) have no execute. */
-type LocalTool = { function: { name: string; description?: string; inputSchema: unknown; execute: (args: any) => unknown } };
+export type LocalTool = { function: { name: string; description?: string; inputSchema: unknown; execute: (args: any) => unknown } };
 
-function localTools(): LocalTool[] {
+export function localTools(): LocalTool[] {
   return (tools as unknown as any[]).filter(
     (t) => t && t.function && typeof t.function.execute === 'function',
   );
@@ -104,10 +104,13 @@ async function streamTurn(
   specs: ReturnType<typeof toolSpecs>,
   onEvent: ((e: AgentEvent) => void) | undefined,
   signal: AbortSignal | undefined,
+  auth?: { apiKey?: string; extraHeaders?: Record<string, string> },
 ): Promise<StreamedTurn> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(auth?.extraHeaders ?? {}) };
+  if (auth?.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     signal,
     body: JSON.stringify({
       model,
@@ -189,21 +192,42 @@ async function streamTurn(
   return turn;
 }
 
-export async function runLocalAgent(
+export interface AgentRunOptions {
+  onEvent?: (event: AgentEvent) => void;
+  signal?: AbortSignal;
+  noTools?: boolean;
+  instructions?: string;
+}
+
+export type AgentRunResult = { text: string; usage: { inputTokens: number; outputTokens: number }; output: unknown[] };
+
+/** How to reach one OpenAI-compatible backend (local llama.cpp, NVIDIA build, GitHub Models, …). */
+export interface OpenAICompatTarget {
+  /** Base URL ending at the `/v1` root (no trailing slash). */
+  baseUrl: string;
+  /** Wire model name the backend expects (prefix already stripped). */
+  wireModel: string;
+  /** Bearer key, if the backend needs one (local llama.cpp needs none). */
+  apiKey?: string;
+  /** Extra request headers (e.g. GitHub's `X-GitHub-Api-Version`). */
+  extraHeaders?: Record<string, string>;
+}
+
+/**
+ * Runs the agent's tool-calling loop against any OpenAI-compatible
+ * `/chat/completions` backend. Shared by local llama.cpp, NVIDIA build, and
+ * GitHub Models — they differ only in base URL + auth. Emits the same
+ * AgentEvent stream and return shape as runAgent() so the CLI + web history
+ * work unchanged.
+ */
+export async function runOpenAICompatibleAgent(
+  target: OpenAICompatTarget,
   config: AgentConfig,
-  model: string,
   input: string | ChatMessage[],
-  options?: {
-    onEvent?: (event: AgentEvent) => void;
-    signal?: AbortSignal;
-    noTools?: boolean;
-    instructions?: string;
-  },
-): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number }; output: unknown[] }> {
-  const baseUrl = localBaseUrl();
-  // Strip the "local/" prefix for the wire model name. llama.cpp serves whatever
-  // model is loaded regardless, but sending the real name keeps logs readable.
-  const wireModel = model.slice(LOCAL_MODEL_PREFIX.length) || 'local';
+  options?: AgentRunOptions,
+): Promise<AgentRunResult> {
+  const { baseUrl, wireModel, apiKey, extraHeaders } = target;
+  const auth = { apiKey, extraHeaders };
   const specs = options?.noTools ? [] : toolSpecs();
   const toolByName = options?.noTools
     ? new Map<string, LocalTool>()
@@ -217,7 +241,7 @@ export async function runLocalAgent(
 
   for (let step = 0; step < config.maxSteps; step++) {
     if (options?.signal?.aborted) break;
-    const turn = await streamTurn(baseUrl, wireModel, messages, specs, options?.onEvent, options?.signal);
+    const turn = await streamTurn(baseUrl, wireModel, messages, specs, options?.onEvent, options?.signal, auth);
     usage.inputTokens += turn.usage?.prompt_tokens ?? 0;
     usage.outputTokens += turn.usage?.completion_tokens ?? 0;
 
@@ -271,4 +295,19 @@ export async function runLocalAgent(
   }
 
   return { text: finalText, usage, output: [] };
+}
+
+/**
+ * Runs the agent against a local llama.cpp `llama-server`. Thin wrapper over
+ * runOpenAICompatibleAgent: the local server needs no API key and serves whatever
+ * model is loaded, so we just strip the "local/" prefix for a readable wire name.
+ */
+export async function runLocalAgent(
+  config: AgentConfig,
+  model: string,
+  input: string | ChatMessage[],
+  options?: AgentRunOptions,
+): Promise<AgentRunResult> {
+  const wireModel = model.slice(LOCAL_MODEL_PREFIX.length) || 'local';
+  return runOpenAICompatibleAgent({ baseUrl: localBaseUrl(), wireModel }, config, input, options);
 }

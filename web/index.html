@@ -79,6 +79,16 @@
       .failover-note { color: var(--dim); font-size: 12px; margin-top: 8px; }
 
       .controls { display: flex; gap: 10px; align-items: center; padding: 14px 0; }
+      .source-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+      .source-btn {
+        margin: 0; padding: 6px 13px; font-size: 13px; border-radius: 999px; cursor: pointer;
+        background: transparent; border: 1px solid var(--border); color: var(--dim);
+      }
+      .source-btn:hover { color: var(--text); }
+      .source-btn.active { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+      .cli-badge { font-size: 11px; border-radius: 5px; padding: 0 6px; border: 1px solid var(--border); }
+      .cli-badge.ok { color: var(--good); border-color: var(--good); }
+      .cli-badge.no { color: var(--warn); border-color: var(--warn); }
       input[type="search"] {
         flex: 1;
         padding: 9px 12px;
@@ -160,19 +170,20 @@
           Order = failover priority. #1 is primary; if it's down the CLI falls through to #2, then #3…
           Use <b>+ Add</b> on a model below to append it.
         </div>
-        <div class="local-add" style="display: flex; gap: 8px; margin-top: 10px; align-items: center;">
-          <input id="localModel" type="text" placeholder="Local llama.cpp model, e.g. Ornith-1.0-9B"
+        <div class="manual-add" style="display: flex; gap: 8px; margin-top: 10px; align-items: center;">
+          <input id="manualModel" type="text" placeholder="Model id…"
                  autocomplete="off" spellcheck="false"
-                 style="flex: 1; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); font-size: 13px;" />
-          <button id="addLocal" class="btn-ghost" style="margin: 0; padding: 6px 12px; white-space: nowrap;">+ Add local</button>
+                 style="flex: 1; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px;" />
+          <button id="addManual" class="btn-ghost" style="margin: 0; padding: 6px 12px; white-space: nowrap;">+ Add</button>
         </div>
-        <div class="failover-note" style="margin-top: 6px;">
-          Runs against a local <code>llama-server</code> (OpenAI-compatible) at
-          <code id="localUrlHint">http://localhost:8080/v1</code> — no API key or cost. Stored as
-          <code>local/&lt;name&gt;</code>.
+        <div class="failover-note" id="sourceHint" style="margin-top: 6px;">
+          <code id="localUrlHint" style="display:none"></code>
         </div>
       </div>
       <div class="controls">
+        <div class="source-bar" id="sourceBar"></div>
+      </div>
+      <div class="controls" style="padding-top: 0;">
         <input id="search" type="search" placeholder="Filter by name or id…" autocomplete="off" />
         <label class="free"><input type="checkbox" id="freeOnly" /> free only</label>
       </div>
@@ -194,6 +205,14 @@
           <button id="copyKey" class="btn-ghost" style="margin: 0; padding: 3px 9px;">Copy key</button>
           <span id="copyKeyStatus"></span>
         </div>
+
+        <label for="nvidiaInput" style="margin-top: 16px;">NVIDIA build API key <span style="color:var(--dim)">(build.nvidia.com — <code>nvidia/…</code> models)</span></label>
+        <input id="nvidiaInput" type="password" placeholder="nvapi-…" autocomplete="off" spellcheck="false" />
+        <div class="show-key"><span id="nvidiaStatus"></span></div>
+
+        <label for="githubInput" style="margin-top: 16px;">GitHub Models token <span style="color:var(--dim)">(github.com/marketplace/models — <code>github/…</code> models)</span></label>
+        <input id="githubInput" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" />
+        <div class="show-key"><span id="githubStatus"></span></div>
 
         <label for="dbInput" style="margin-top: 16px;">Postgres connection URL (for projects &amp; history)</label>
         <input id="dbInput" type="text" placeholder="postgres://user:pass@localhost:5432/dbname" autocomplete="off" spellcheck="false" />
@@ -230,11 +249,25 @@
         },
       ];
 
-      let models = [];
+      // Model sources (routers). Each browses a different catalog; the failover chain
+      // can mix models from any of them. `endpoint` null = no catalog, manual-add only.
+      const SOURCES = [
+        { key: "openrouter", label: "OpenRouter", endpoint: "/api/models", prefix: "", manual: "e.g. qwen/qwen3-coder", note: "OpenRouter models. Add a key in Settings." },
+        { key: "nvidia", label: "NVIDIA", endpoint: "/api/models/nvidia", prefix: "nvidia/", manual: "e.g. moonshotai/kimi-k2-instruct", note: "build.nvidia.com (OpenAI-compatible). Needs the NVIDIA key in Settings. Stored as <code>nvidia/&lt;model&gt;</code>." },
+        { key: "github", label: "GitHub", endpoint: "/api/models/github", prefix: "github/", manual: "e.g. openai/gpt-4o", note: "GitHub Models (OpenAI-compatible). Needs a GitHub token in Settings. Stored as <code>github/&lt;model&gt;</code>." },
+        { key: "local", label: "Local", endpoint: null, prefix: "local/", manual: "Local llama.cpp model, e.g. Ornith-1.0-9B", note: "Runs against a local <code>llama-server</code> at <code id='localUrlHint2'>http://localhost:8080/v1</code> — no key or cost. Stored as <code>local/&lt;name&gt;</code>." },
+        { key: "cli", label: "Auth CLI", endpoint: "/api/cli/status", prefix: "cli/", manual: "", note: "Uses a subscription CLI's own login (Claude Code, Codex, Gemini, Jules). Stored as <code>cli/&lt;name&gt;</code>." },
+      ];
+
+      let models = [];              // catalog for the active source
+      const catalogCache = {};      // source key -> models[]
+      let cliStatus = [];           // [{name,label,installed,loggedIn}]
+      let source = "openrouter";
       let agents = { coder: [], image: [], doc: [] };
       let activeTab = "coder";
 
       const agentDef = () => AGENTS.find((a) => a.key === activeTab);
+      const sourceDef = () => SOURCES.find((s) => s.key === source);
 
       function price(n) {
         if (!n) return "free";
@@ -315,17 +348,57 @@
         );
       }
 
+      function renderCliGrid() {
+        $("count").textContent = "Subscription CLIs — add one to the chain to route through its login";
+        $("grid").innerHTML = cliStatus
+          .map((c) => {
+            const id = "cli/" + c.name;
+            const pos = agents[activeTab].indexOf(id);
+            const inChain = pos !== -1;
+            const auth = c.installed
+              ? c.loggedIn
+                ? `<span class="cli-badge ok">logged in</span>`
+                : `<span class="cli-badge no">not logged in</span>`
+              : `<span class="cli-badge no">not installed</span>`;
+            return `
+              <div class="card ${inChain ? "inchain" : ""}">
+                <div class="name">${c.label}</div>
+                <div class="id">${id}</div>
+                <div class="meta">${auth}</div>
+                <div class="spacer"></div>
+                ${inChain
+                  ? `<button class="add inchain" data-rm="${id}">✓ ${activeTab} #${pos + 1} — remove</button>`
+                  : `<button class="add" data-add="${id}">+ Add to ${agentDef().label}</button>`}
+              </div>`;
+          })
+          .join("");
+        wireGridButtons();
+      }
+
+      function wireGridButtons() {
+        $("grid").querySelectorAll("button[data-add]").forEach((b) =>
+          b.addEventListener("click", () => addToChain(activeTab, b.dataset.add)),
+        );
+        $("grid").querySelectorAll("button[data-rm]").forEach((b) =>
+          b.addEventListener("click", () => removeFromChain(activeTab, b.dataset.rm)),
+        );
+      }
+
       function renderGrid() {
+        if (source === "cli") return renderCliGrid();
         const q = $("search").value.trim().toLowerCase();
         const freeOnly = $("freeOnly").checked;
         const def = agentDef();
+        // The modality filter only makes sense for OpenRouter (it has modality metadata).
+        // Other catalogs lack it, so show everything and let the user judge.
+        const applyAgentFilter = source === "openrouter";
         const list = models.filter((m) => {
-          if (!def.filter(m)) return false;
+          if (applyAgentFilter && !def.filter(m)) return false;
           if (freeOnly && (m.promptPrice || m.completionPrice)) return false;
           if (!q) return true;
           return (m.id + " " + (m.name || "")).toLowerCase().includes(q);
         });
-        $("count").textContent = `${list.length} models available for ${def.label}`;
+        $("count").textContent = `${list.length} ${sourceDef().label} models${applyAgentFilter ? " for " + def.label : ""}`;
         $("grid").innerHTML = list
           .map((m) => {
             const isFree = !m.promptPrice && !m.completionPrice;
@@ -347,36 +420,74 @@
               </div>`;
           })
           .join("");
-        $("grid").querySelectorAll("button[data-add]").forEach((b) =>
-          b.addEventListener("click", () => addToChain(activeTab, b.dataset.add)),
+        wireGridButtons();
+      }
+
+      function renderSourceBar() {
+        $("sourceBar").innerHTML = SOURCES.map(
+          (s) => `<button class="source-btn ${s.key === source ? "active" : ""}" data-src="${s.key}">${s.label}</button>`,
+        ).join("");
+        $("sourceBar").querySelectorAll(".source-btn").forEach((b) =>
+          b.addEventListener("click", () => switchSource(b.dataset.src)),
         );
-        $("grid").querySelectorAll("button[data-rm]").forEach((b) =>
-          b.addEventListener("click", () => removeFromChain(activeTab, b.dataset.rm)),
-        );
+        // Manual-add box reflects the active source.
+        const def = sourceDef();
+        $("manualModel").placeholder = def.manual || "";
+        $("manualModel").parentElement.style.display = def.manual ? "flex" : "none";
+        $("sourceHint").innerHTML = def.note + `<code id="localUrlHint" style="display:none"></code>`;
+        if (localBaseUrlHint) { const el = document.getElementById("localUrlHint2"); if (el) el.textContent = localBaseUrlHint; }
       }
 
       function render() {
         renderTabs();
         renderChain();
+        renderSourceBar();
         renderGrid();
       }
 
-      async function load() {
+      let localBaseUrlHint = "";
+
+      function switchSource(src) {
+        source = src;
+        models = catalogCache[src] || [];
+        render();
+        loadSource(src); // refresh in background (uses cache instantly above)
+      }
+
+      // Fetch (and cache) the catalog for a source. Local has no catalog (manual-add only);
+      // CLI fetches auth status instead of a model list.
+      async function loadSource(src) {
+        const def = SOURCES.find((s) => s.key === src);
+        if (!def.endpoint) { // local: nothing to fetch
+          models = catalogCache[src] = [];
+          if (src === source) { $("state").style.display = "none"; render(); }
+          return;
+        }
         try {
-          const r = await fetch("/api/models");
-          const data = await r.json();
-          models = data.models.sort((a, b) => a.id.localeCompare(b.id));
-          agents = data.agents || { coder: [], image: [], doc: [] };
-          $("state").style.display = "none";
-          if (!data.hasKey) {
-            $("state").style.display = "block";
-            $("state").textContent = "No API key yet — click Settings (top-right) to add your OpenRouter key so the CLI can run.";
+          const data = await (await fetch(def.endpoint)).json();
+          agents = data.agents || agents;
+          if (src === "cli") {
+            cliStatus = data.clis || [];
+          } else {
+            models = catalogCache[src] = (data.models || []).sort((a, b) => a.id.localeCompare(b.id));
           }
-          render();
+          if (src === source) {
+            $("state").style.display = "none";
+            if (data.error) {
+              $("state").style.display = "block";
+              $("state").textContent = `${def.label}: ${data.error}`;
+            } else if (src !== "cli" && !models.length && !data.hasKey) {
+              $("state").style.display = "block";
+              $("state").textContent = `No ${def.label} key yet — open Settings (top-right) to add one.`;
+            }
+            render();
+          }
         } catch (e) {
-          $("state").textContent = "Failed to load models: " + e.message;
+          if (src === source) { $("state").style.display = "block"; $("state").textContent = `Failed to load ${def.label}: ${e.message}`; }
         }
       }
+
+      const load = () => loadSource(source);
 
       // ---- Settings (API key) ----
       let keyIsSet = false;
@@ -398,7 +509,15 @@
           $("dbInput").placeholder = s.hasDb ? s.dbMasked + (s.dbFromEnv ? " (from env)" : "") : "postgres://user:pass@localhost:5432/dbname";
           $("dbStatus").textContent = s.hasDb ? "configured" : "not set";
           $("dbStatus").style.color = s.hasDb ? "var(--good)" : "var(--dim)";
-          if (s.localBaseUrl && $("localUrlHint")) $("localUrlHint").textContent = s.localBaseUrl;
+          if (s.localBaseUrl) { localBaseUrlHint = s.localBaseUrl; const el = document.getElementById("localUrlHint2"); if (el) el.textContent = s.localBaseUrl; }
+          $("nvidiaInput").value = "";
+          $("nvidiaInput").placeholder = s.hasNvidia ? s.nvidiaMasked + (s.nvidiaFromEnv ? " (from env)" : "") : "nvapi-…";
+          $("nvidiaStatus").textContent = s.hasNvidia ? "configured ✓" : "not set";
+          $("nvidiaStatus").style.color = s.hasNvidia ? "var(--good)" : "var(--dim)";
+          $("githubInput").value = "";
+          $("githubInput").placeholder = s.hasGithub ? s.githubMasked + (s.githubFromEnv ? " (from env)" : "") : "ghp_… or github_pat_…";
+          $("githubStatus").textContent = s.hasGithub ? "configured ✓" : "not set";
+          $("githubStatus").style.color = s.hasGithub ? "var(--good)" : "var(--dim)";
         } catch (e) {}
       }
 
@@ -422,20 +541,29 @@
       async function saveSettings() {
         const key = $("keyInput").value.trim();
         const dbUrl = $("dbInput").value.trim();
-        if (!key && !dbUrl) { $("settingsStatus").textContent = "Enter an API key and/or a Postgres URL."; $("settingsStatus").className = "status"; return; }
+        const nvidia = $("nvidiaInput").value.trim();
+        const github = $("githubInput").value.trim();
+        if (!key && !dbUrl && !nvidia && !github) { $("settingsStatus").textContent = "Enter a key or a Postgres URL."; $("settingsStatus").className = "status"; return; }
         $("settingsStatus").textContent = "Saving…"; $("settingsStatus").className = "status";
         try {
           const payload = {};
           if (key) payload.openrouterApiKey = key;
           if (dbUrl) payload.databaseUrl = dbUrl;
+          if (nvidia) payload.nvidiaApiKey = nvidia;
+          if (github) payload.githubToken = github;
           const s = await (await fetch("/api/settings", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           })).json();
           keyIsSet = s.hasKey; reflectKeyState();
-          $("settingsStatus").textContent = "Saved." + (s.hasKey ? " Key: " + s.keyMasked : "") + (s.hasDb ? " DB set." : "");
+          $("settingsStatus").textContent = "Saved."
+            + (s.hasKey ? " OpenRouter ✓" : "") + (s.hasNvidia ? " NVIDIA ✓" : "")
+            + (s.hasGithub ? " GitHub ✓" : "") + (s.hasDb ? " DB ✓" : "");
           $("settingsStatus").className = "status ok";
           setTimeout(closeSettings, 900);
+          // Refresh any catalog whose key just changed.
+          delete catalogCache.nvidia; delete catalogCache.github;
+          loadSettings();
           load();
         } catch (e) {
           $("settingsStatus").textContent = "Failed to save: " + e.message; $("settingsStatus").className = "status";
@@ -485,15 +613,17 @@
       $("search").addEventListener("input", renderGrid);
       $("freeOnly").addEventListener("change", renderGrid);
 
-      function addLocalModel() {
-        let name = $("localModel").value.trim();
+      // Add a model by id from the manual box, prefixed for the active source.
+      function addManualModel() {
+        const def = sourceDef();
+        let name = $("manualModel").value.trim();
         if (!name) return;
-        if (!name.startsWith("local/")) name = "local/" + name.replace(/^\/+/, "");
+        if (def.prefix && !name.startsWith(def.prefix)) name = def.prefix + name.replace(/^\/+/, "");
         addToChain(activeTab, name);
-        $("localModel").value = "";
+        $("manualModel").value = "";
       }
-      $("addLocal").addEventListener("click", addLocalModel);
-      $("localModel").addEventListener("keydown", (e) => { if (e.key === "Enter") addLocalModel(); });
+      $("addManual").addEventListener("click", addManualModel);
+      $("manualModel").addEventListener("keydown", (e) => { if (e.key === "Enter") addManualModel(); });
 
       loadSettings();
       load();
