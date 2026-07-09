@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, nvidiaBaseUrl, githubBaseUrl, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, nvidiaBaseUrl, githubBaseUrl, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages } from '../src/db.js';
 import { cliStatuses } from '../src/providers/credentials.js';
 
@@ -191,6 +191,9 @@ const server = createServer(async (req, res) => {
         hasGithub: !!github,
         githubMasked: maskKey(github),
         githubFromEnv: !!process.env.GITHUB_MODELS_TOKEN,
+        hasGemini: !!readGeminiApiKey(),
+        geminiMasked: maskKey(readGeminiApiKey()),
+        geminiFromEnv: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
       });
       return;
     }
@@ -199,12 +202,13 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/settings') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken } = JSON.parse(body || '{}');
+      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken, geminiApiKey } = JSON.parse(body || '{}');
       const patch: Record<string, string> = {};
       if (typeof openrouterApiKey === 'string') patch.openrouterApiKey = openrouterApiKey.trim();
       if (typeof databaseUrl === 'string') patch.databaseUrl = databaseUrl.trim();
       if (typeof nvidiaApiKey === 'string') patch.nvidiaApiKey = nvidiaApiKey.trim();
       if (typeof githubToken === 'string') patch.githubToken = githubToken.trim();
+      if (typeof geminiApiKey === 'string') patch.geminiApiKey = geminiApiKey.trim();
       if (!Object.keys(patch).length) return json(res, 400, { error: 'nothing to save' });
       saveSecrets(patch);
       const key = apiKeyNow();
@@ -218,6 +222,8 @@ const server = createServer(async (req, res) => {
         nvidiaMasked: maskKey(readNvidiaKey()),
         hasGithub: !!readGithubToken(),
         githubMasked: maskKey(readGithubToken()),
+        hasGemini: !!readGeminiApiKey(),
+        geminiMasked: maskKey(readGeminiApiKey()),
       });
       return;
     }
@@ -230,6 +236,7 @@ const server = createServer(async (req, res) => {
         databaseUrl: readDatabaseUrl(),
         nvidiaApiKey: readNvidiaKey(),
         githubToken: readGithubToken(),
+        geminiApiKey: readGeminiApiKey(),
       });
       return;
     }

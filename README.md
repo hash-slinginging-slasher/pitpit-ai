@@ -90,7 +90,7 @@ across different providers. Pick the router with the source selector above the m
 | `github/` | **GitHub Models** ([marketplace/models](https://github.com/marketplace/models)) | GitHub token | `github/openai/gpt-4o` |
 | `cli/claude` | **Claude Code** subscription | its own login | `cli/claude` or `cli/claude/claude-opus-4-1` |
 | `cli/codex` | **OpenAI Codex** | its own login | `cli/codex` |
-| `cli/gemini` | **Gemini CLI** *(experimental)* | its own login | `cli/gemini` |
+| `cli/gemini` | **Gemini** | API key or CLI login | `cli/gemini` |
 | `cli/jules` | **Jules** *(experimental)* | its own login | `cli/jules` |
 
 - **NVIDIA / GitHub** are OpenAI-compatible APIs. Add the key in **Settings** (or `NVIDIA_API_KEY`
@@ -100,7 +100,11 @@ across different providers. Pick the router with the source selector above the m
   source to see install/login status per CLI. `cli/claude` reads the Claude Code OAuth token from
   `~/.claude/.credentials.json` (refreshing it as needed) and drives the agent's tools against the
   Anthropic Messages API. `cli/codex` works when Codex is logged in with an API key. `cli/gemini`
-  and `cli/jules` are scaffolded but not yet validated.
+  uses a **Gemini API key** ([aistudio.google.com/apikey](https://aistudio.google.com/apikey), set
+  in Settings or `GEMINI_API_KEY`) when present — the reliable path — otherwise the Gemini CLI's own
+  Code Assist login. `cli/jules` is scaffolded but not yet wired to a backend.
+- **Pin a model** on the CLI routers with a suffix: `cli/claude/claude-opus-4-1`,
+  `cli/gemini/gemini-2.0-flash`, `cli/codex/gpt-4o`. Without a suffix a sensible default is used.
 
 > ⚠️ **Note on the Auth-CLI routers.** Using a subscription's OAuth token to drive a different
 > client against the vendor's private API is undocumented, can break when the vendor changes

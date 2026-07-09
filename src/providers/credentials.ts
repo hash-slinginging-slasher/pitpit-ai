@@ -209,4 +209,28 @@ export function readGeminiOAuth(): GeminiAuth {
   return { accessToken, expiryDate: Number(data.expiry_date || data.expiryDate || 0) || undefined };
 }
 
+/** Code Assist API base (the backend the Gemini CLI's free/personal tier talks to). */
+export const CODE_ASSIST_BASE = 'https://cloudcode-pa.googleapis.com/v1internal';
+
+/**
+ * Discover the Code Assist project id for this account (the Gemini CLI calls
+ * `:loadCodeAssist` on startup). Returns the project id, or '' if the account is a
+ * free tier that needs no explicit project. Best-effort: a non-OK response yields ''
+ * rather than throwing, since streamGenerateContent can still work without it.
+ */
+export async function resolveCodeAssistProject(accessToken: string): Promise<string> {
+  try {
+    const r = await fetch(`${CODE_ASSIST_BASE}:loadCodeAssist`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metadata: { pluginType: 'GEMINI' } }),
+    });
+    if (!r.ok) return '';
+    const j = (await r.json()) as any;
+    return j.cloudaicompanionProject || j.project || '';
+  } catch {
+    return '';
+  }
+}
+
 export { CLI_SPECS };

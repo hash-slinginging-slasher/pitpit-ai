@@ -211,6 +211,15 @@ export function readGithubToken(): string {
 }
 
 /**
+ * Resolve a Gemini API key (Google AI Studio). Precedence: GEMINI_API_KEY →
+ * GOOGLE_API_KEY env → secrets.json `geminiApiKey`. When present, cli/gemini uses the
+ * public Generative Language API instead of the CLI's Code Assist OAuth backend.
+ */
+export function readGeminiApiKey(): string {
+  return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || readSecrets().geminiApiKey || '';
+}
+
+/**
  * Does this model id require a secret key that isn't currently available? Used by the
  * CLI to decide whether to demand a key before a turn. Local + cli/* need no key here
  * (cli/* resolve their own OAuth token at call time); OpenRouter/NVIDIA/GitHub do.

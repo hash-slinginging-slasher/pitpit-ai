@@ -2,7 +2,8 @@ import type { AgentConfig, ProviderId } from '../config.js';
 import { runOpenAICompatibleAgent, type AgentRunOptions, type AgentRunResult } from '../local-agent.js';
 import type { ChatMessage } from '../agent.js';
 import { runClaudeOAuthAgent } from './anthropic-agent.js';
-import { readCodexAuth, readGeminiOAuth } from './credentials.js';
+import { runGeminiAgent } from './gemini-agent.js';
+import { readCodexAuth } from './credentials.js';
 
 /**
  * Dispatcher for the subscription-CLI routers. Each reads the corresponding CLI's
@@ -11,7 +12,8 @@ import { readCodexAuth, readGeminiOAuth } from './credentials.js';
  *   cli/claude  — Anthropic Messages via Claude Code OAuth (fully supported).
  *   cli/codex   — OpenAI API when the codex login used an API key (supported);
  *                 the ChatGPT-subscription backend is not validated here.
- *   cli/gemini  — Google Code Assist (experimental; not validated on this machine).
+ *   cli/gemini  — Gemini generateContent via a Gemini API key, or the CLI's Code
+ *                 Assist OAuth login (network path not validated on this machine).
  *   cli/jules   — no stable public completion API yet (experimental).
  */
 export async function runCliAgent(
@@ -46,14 +48,9 @@ export async function runCliAgent(
       );
     }
 
-    case 'cli-gemini': {
-      // Resolve the token so the failure is specific (not-logged-in vs experimental).
-      readGeminiOAuth();
-      throw new Error(
-        'cli/gemini is experimental: the Gemini CLI (Google Code Assist) backend is not validated in this build yet. ' +
-          'Use cli/claude, an OpenRouter Gemini model, or NVIDIA/GitHub for now.',
-      );
-    }
+    case 'cli-gemini':
+      // Uses a Gemini API key (GEMINI_API_KEY) if set, else the Gemini CLI's OAuth login.
+      return runGeminiAgent(config, model, input, options);
 
     case 'cli-jules':
       throw new Error('cli/jules is experimental: Jules has no stable public completion API wired up yet.');

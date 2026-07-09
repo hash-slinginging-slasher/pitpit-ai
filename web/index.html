@@ -214,6 +214,10 @@
         <input id="githubInput" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" />
         <div class="show-key"><span id="githubStatus"></span></div>
 
+        <label for="geminiInput" style="margin-top: 16px;">Gemini API key <span style="color:var(--dim)">(optional — lets <code>cli/gemini</code> use the API instead of the CLI login)</span></label>
+        <input id="geminiInput" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+        <div class="show-key"><span id="geminiStatus"></span></div>
+
         <label for="dbInput" style="margin-top: 16px;">Postgres connection URL (for projects &amp; history)</label>
         <input id="dbInput" type="text" placeholder="postgres://user:pass@localhost:5432/dbname" autocomplete="off" spellcheck="false" />
         <div class="show-key">
@@ -518,6 +522,10 @@
           $("githubInput").placeholder = s.hasGithub ? s.githubMasked + (s.githubFromEnv ? " (from env)" : "") : "ghp_… or github_pat_…";
           $("githubStatus").textContent = s.hasGithub ? "configured ✓" : "not set";
           $("githubStatus").style.color = s.hasGithub ? "var(--good)" : "var(--dim)";
+          $("geminiInput").value = "";
+          $("geminiInput").placeholder = s.hasGemini ? s.geminiMasked + (s.geminiFromEnv ? " (from env)" : "") : "AIza…";
+          $("geminiStatus").textContent = s.hasGemini ? "configured ✓" : "not set (cli/gemini will use the CLI login)";
+          $("geminiStatus").style.color = s.hasGemini ? "var(--good)" : "var(--dim)";
         } catch (e) {}
       }
 
@@ -543,7 +551,8 @@
         const dbUrl = $("dbInput").value.trim();
         const nvidia = $("nvidiaInput").value.trim();
         const github = $("githubInput").value.trim();
-        if (!key && !dbUrl && !nvidia && !github) { $("settingsStatus").textContent = "Enter a key or a Postgres URL."; $("settingsStatus").className = "status"; return; }
+        const gemini = $("geminiInput").value.trim();
+        if (!key && !dbUrl && !nvidia && !github && !gemini) { $("settingsStatus").textContent = "Enter a key or a Postgres URL."; $("settingsStatus").className = "status"; return; }
         $("settingsStatus").textContent = "Saving…"; $("settingsStatus").className = "status";
         try {
           const payload = {};
@@ -551,6 +560,7 @@
           if (dbUrl) payload.databaseUrl = dbUrl;
           if (nvidia) payload.nvidiaApiKey = nvidia;
           if (github) payload.githubToken = github;
+          if (gemini) payload.geminiApiKey = gemini;
           const s = await (await fetch("/api/settings", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
@@ -558,7 +568,7 @@
           keyIsSet = s.hasKey; reflectKeyState();
           $("settingsStatus").textContent = "Saved."
             + (s.hasKey ? " OpenRouter ✓" : "") + (s.hasNvidia ? " NVIDIA ✓" : "")
-            + (s.hasGithub ? " GitHub ✓" : "") + (s.hasDb ? " DB ✓" : "");
+            + (s.hasGithub ? " GitHub ✓" : "") + (s.hasGemini ? " Gemini ✓" : "") + (s.hasDb ? " DB ✓" : "");
           $("settingsStatus").className = "status ok";
           setTimeout(closeSettings, 900);
           // Refresh any catalog whose key just changed.
