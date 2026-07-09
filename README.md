@@ -105,10 +105,12 @@ across different providers. Pick the router with the source selector above the m
   Code Assist login.
 - **`cli/jules` is different from every other router.** [Jules](https://jules.google) is an *async*
   agent that works on a **connected GitHub repo in its own VM and opens a pull request** — it does
-  **not** edit your local files or use the agent's tools. Add a Jules API key (jules.google →
-  Settings, or `JULES_API_KEY`), run `coder` inside a repo whose GitHub `origin` is connected to
-  Jules, and a turn submits the task, streams Jules's plan/progress, and returns the session + PR
-  links. Pin a specific repo with `JULES_SOURCE=sources/github-<owner>-<repo>`.
+  **not** edit your local files or use the agent's tools. If the **`jules` CLI is installed**,
+  `cli/jules` shells out to it and reuses your own `jules login` (Google OAuth) — no API key. Run
+  `coder` inside a repo connected to Jules and a turn runs `jules new` to submit the task; bring the
+  result back later with `jules remote pull --session <id> --apply` or `jules teleport <id>`. If the
+  CLI isn't installed, it falls back to the **Jules API** (key from jules.google → Settings, or
+  `JULES_API_KEY`; pin a repo with `JULES_SOURCE=sources/github-<owner>-<repo>`).
 - **Pin a model** on the CLI routers with a suffix: `cli/claude/claude-opus-4-1`,
   `cli/gemini/gemini-2.0-flash`, `cli/codex/gpt-4o`. Without a suffix a sensible default is used.
 

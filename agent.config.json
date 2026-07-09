@@ -4,8 +4,9 @@
   "maxCost": 1,
   "agents": {
     "coder": [
-      "cli/jules",
-      "google/gemma-4-26b-a4b-it:free"
+      "cli/claude",
+      "google/gemma-4-26b-a4b-it:free",
+      "cli/jules"
     ],
     "image": [],
     "doc": []

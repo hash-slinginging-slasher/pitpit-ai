@@ -41,23 +41,36 @@ const CLI_SPECS: Record<CliName, CliSpec> = {
   jules: { command: 'jules', label: 'Jules', credFiles: [h('.jules', 'auth.json'), h('.config', 'jules', 'auth.json')] },
 };
 
-/** Does `command` resolve on PATH? Scans PATH with PATHEXT so it works on Windows + POSIX. */
-function commandExists(command: string): boolean {
-  const paths = (process.env.PATH || '').split(delimiter).filter(Boolean);
+/**
+ * Full path to `command`'s executable, or '' if not found. Scans PATH with PATHEXT,
+ * plus the npm global bin dir — CLIs installed via `npm i -g` (jules, sometimes
+ * codex/gemini) land there and it isn't always on a given process's PATH.
+ */
+export function resolveCliPath(command: string): string {
+  const dirs = (process.env.PATH || '').split(delimiter).filter(Boolean);
+  // npm global bin: %APPDATA%\npm on Windows, else the prefix's bin.
+  if (process.platform === 'win32' && process.env.APPDATA) dirs.push(resolve(process.env.APPDATA, 'npm'));
+  else dirs.push('/usr/local/bin', resolve(HOME, '.npm-global', 'bin'), resolve(HOME, '.local', 'bin'));
   const exts =
     process.platform === 'win32'
       ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase())
       : [''];
-  for (const dir of paths) {
+  for (const dir of dirs) {
     for (const ext of exts) {
       try {
-        if (existsSync(resolve(dir, command + ext))) return true;
+        const p = resolve(dir, command + ext);
+        if (existsSync(p)) return p;
       } catch {
         /* ignore unreadable PATH entries */
       }
     }
   }
-  return false;
+  return '';
+}
+
+/** Does `command` resolve to an executable anywhere we look? */
+function commandExists(command: string): boolean {
+  return !!resolveCliPath(command);
 }
 
 /** The first credential file that exists for a CLI, or '' if none. */
@@ -82,14 +95,18 @@ export interface CliStatus {
 /** Report install + login state for every CLI router (booleans only — no tokens). */
 export function cliStatuses(): CliStatus[] {
   return CLI_NAMES.map((name) => {
-    // Jules is API-key based (no local CLI); Gemini can use an API key too.
+    const binary = commandExists(CLI_SPECS[name].command);
+    // Jules manages its own Google login (jules login) and stores no local token file,
+    // so we can't cheaply verify login — report it as available once the binary exists.
+    // A Jules API key is an alternative when the CLI isn't installed.
     if (name === 'jules') {
-      const hasKey = !!readJulesApiKey();
-      return { name, label: CLI_SPECS[name].label, installed: hasKey, loggedIn: hasKey };
+      const usable = binary || !!readJulesApiKey();
+      return { name, label: CLI_SPECS[name].label, installed: usable, loggedIn: usable };
     }
-    const installed = commandExists(CLI_SPECS[name].command);
-    const loggedIn = !!credFileFor(name) || (name === 'gemini' && !!readGeminiApiKey());
-    return { name, label: CLI_SPECS[name].label, installed: installed || (name === 'gemini' && !!readGeminiApiKey()), loggedIn };
+    // Gemini can also be used via an API key even without the CLI logged in.
+    const geminiKey = name === 'gemini' && !!readGeminiApiKey();
+    const loggedIn = !!credFileFor(name) || geminiKey;
+    return { name, label: CLI_SPECS[name].label, installed: binary || geminiKey, loggedIn };
   });
 }
 

@@ -1,8 +1,10 @@
+import { spawn } from 'child_process';
 import type { AgentConfig } from '../config.js';
 import { readJulesApiKey, readJulesSource } from '../config.js';
 import type { AgentRunOptions, AgentRunResult } from '../local-agent.js';
 import type { ChatMessage } from '../agent.js';
 import { remoteGithubSlug, currentBranch } from '../git.js';
+import { resolveCliPath } from './credentials.js';
 
 /**
  * `jules` transport for the cli/jules router. Jules is NOT a completion endpoint —
@@ -109,16 +111,91 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
   });
 
+/**
+ * Extract the latest user prompt from string-or-history input.
+ */
+function latestPrompt(input: string | ChatMessage[]): string {
+  return typeof input === 'string' ? input : [...input].reverse().find((m) => m.role === 'user')?.content ?? '';
+}
+
+/**
+ * Shell out to the installed `jules` CLI, which uses your own `jules login` (Google
+ * OAuth) — no API key needed. `jules new` reads the task from stdin (so the prompt is
+ * never interpolated into a command line) and submits a session for the current repo.
+ * Jules is async, so this returns the session link; apply results later with
+ * `jules remote pull --session <id> --apply` or `jules teleport <id>`.
+ */
+async function runJulesCliAgent(
+  julesPath: string,
+  input: string | ChatMessage[],
+  options?: AgentRunOptions,
+): Promise<AgentRunResult> {
+  const prompt = latestPrompt(input);
+  if (!prompt.trim()) throw new Error('cli/jules: empty prompt.');
+  options?.onEvent?.({ type: 'reasoning', delta: 'Submitting task to Jules via the jules CLI…\n' });
+
+  const slug = await remoteGithubSlug(process.cwd());
+  const args = ['new'];
+  if (slug) args.push('--repo', `${slug.owner}/${slug.repo}`);
+
+  return new Promise<AgentRunResult>((resolvePromise, reject) => {
+    // shell:true lets Windows run the npm `.cmd` shim; args are fixed (no user data),
+    // and the prompt goes via stdin, so there is no command-injection surface.
+    const child = spawn(`"${julesPath}"`, args, { cwd: process.cwd(), shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => {
+      const s = d.toString();
+      out += s;
+      options?.onEvent?.({ type: 'text', delta: s });
+    });
+    child.stderr.on('data', (d) => {
+      const s = d.toString();
+      err += s;
+      options?.onEvent?.({ type: 'reasoning', delta: s });
+    });
+    child.on('error', reject);
+    options?.signal?.addEventListener('abort', () => child.kill(), { once: true });
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolvePromise({ text: out.trim() || 'Jules session submitted.', usage: { inputTokens: 0, outputTokens: 0 }, output: [] });
+      } else {
+        const hint = /login|auth|sign in|unauthenticated/i.test(out + err)
+          ? ' Run `jules login` to sign in to Jules first.'
+          : '';
+        reject(new Error(`jules exited with code ${code}.${hint}${err ? ` ${err.trim().slice(0, 200)}` : ''}`));
+      }
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
 export async function runJulesAgent(
+  config: AgentConfig,
+  model: string,
+  input: string | ChatMessage[],
+  options?: AgentRunOptions,
+): Promise<AgentRunResult> {
+  // Prefer the installed jules CLI (reuses your `jules login` — no API key).
+  const julesPath = resolveCliPath('jules');
+  if (julesPath) return runJulesCliAgent(julesPath, input, options);
+
+  // Fall back to the Jules API when the CLI isn't installed.
+  const apiKey = readJulesApiKey();
+  if (!apiKey) {
+    throw new Error('cli/jules needs the jules CLI (run `jules login`) or a Jules API key (Settings / JULES_API_KEY).');
+  }
+  return runJulesApiAgent(config, model, input, options);
+}
+
+async function runJulesApiAgent(
   _config: AgentConfig,
   _model: string,
   input: string | ChatMessage[],
   options?: AgentRunOptions,
 ): Promise<AgentRunResult> {
   const apiKey = readJulesApiKey();
-  if (!apiKey) {
-    throw new Error('cli/jules needs a Jules API key. Create one at https://jules.google (Settings) and add it here (Settings or JULES_API_KEY).');
-  }
   // Jules takes a single task prompt; use the latest user message.
   const prompt = typeof input === 'string' ? input : [...input].reverse().find((m) => m.role === 'user')?.content ?? '';
   if (!prompt.trim()) throw new Error('cli/jules: empty prompt.');
