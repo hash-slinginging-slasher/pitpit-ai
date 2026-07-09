@@ -368,19 +368,55 @@
                 ? `<span class="cli-badge ok">logged in</span>`
                 : `<span class="cli-badge no">not logged in</span>`
               : `<span class="cli-badge no">not installed</span>`;
+            const pkg = (c.installCmd || "").replace("npm install -g ", "");
+            const hint = !c.installed
+              ? `<div class="failover-note" style="margin:6px 0 0;">Installs <code>${pkg}</code>.</div>`
+              : (!c.loggedIn && c.name !== "jules"
+                  ? `<div class="failover-note" style="margin:6px 0 0;">Sign in: run <code>${c.loginCmd}</code> in a terminal.</div>`
+                  : "");
             return `
               <div class="card ${inChain ? "inchain" : ""}">
                 <div class="name">${c.label}</div>
                 <div class="id">${id}</div>
                 <div class="meta">${auth}</div>
+                ${hint}
                 <div class="spacer"></div>
+                ${!c.installed
+                  ? `<button class="btn-ghost" data-install="${c.name}" style="margin:6px 0 6px;padding:8px 12px;">⬇ Install ${pkg}</button>`
+                  : ""}
                 ${inChain
                   ? `<button class="add inchain" data-rm="${id}">✓ ${activeTab} #${pos + 1} — remove</button>`
                   : `<button class="add" data-add="${id}">+ Add to ${agentDef().label}</button>`}
               </div>`;
           })
           .join("");
+        $("grid").querySelectorAll("button[data-install]").forEach((b) =>
+          b.addEventListener("click", () => installCli(b.dataset.install, b)),
+        );
         wireGridButtons();
+      }
+
+      async function installCli(name, btn) {
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "⏳ installing… (up to a minute)";
+        try {
+          const r = await (await fetch("/api/cli/install", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          })).json();
+          if (r.clis) cliStatus = r.clis;
+          if (r.ok) {
+            render(); // installed → button disappears, badge updates
+          } else {
+            console.error("CLI install failed:", r.error || r.error);
+            btn.textContent = "✗ failed — check the terminal running the server";
+            setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+          }
+        } catch (e) {
+          btn.textContent = "✗ error: " + e.message;
+          setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+        }
       }
 
       function wireGridButtons() {

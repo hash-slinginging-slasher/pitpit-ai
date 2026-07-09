@@ -25,21 +25,33 @@ interface CliSpec {
   credFiles: string[];
   /** Human label. */
   label: string;
+  /** npm package that provides the CLI (for the one-click install button). */
+  npm: string;
+  /** Command to log in after install, shown as a hint. */
+  loginCmd: string;
 }
 
 const HOME = homedir();
 const h = (...p: string[]) => resolve(HOME, ...p);
 
 const CLI_SPECS: Record<CliName, CliSpec> = {
-  claude: { command: 'claude', label: 'Claude Code', credFiles: [h('.claude', '.credentials.json')] },
-  codex: { command: 'codex', label: 'OpenAI Codex', credFiles: [h('.codex', 'auth.json')] },
+  claude: { command: 'claude', label: 'Claude Code', credFiles: [h('.claude', '.credentials.json')], npm: '@anthropic-ai/claude-code', loginCmd: 'claude' },
+  codex: { command: 'codex', label: 'OpenAI Codex', credFiles: [h('.codex', 'auth.json')], npm: '@openai/codex', loginCmd: 'codex login' },
   gemini: {
     command: 'gemini',
     label: 'Gemini CLI',
     credFiles: [h('.gemini', 'oauth_creds.json'), h('.config', 'gcloud', 'application_default_credentials.json')],
+    npm: '@google/gemini-cli',
+    loginCmd: 'gemini',
   },
-  jules: { command: 'jules', label: 'Jules', credFiles: [h('.jules', 'auth.json'), h('.config', 'jules', 'auth.json')] },
+  jules: { command: 'jules', label: 'Jules', credFiles: [h('.jules', 'auth.json'), h('.config', 'jules', 'auth.json')], npm: '@google/jules', loginCmd: 'jules login' },
 };
+
+/** The npm package + install command for a CLI (used by the install button). */
+export function cliInstall(name: CliName): { npm: string; command: string; loginCmd: string } {
+  const s = CLI_SPECS[name];
+  return { npm: s.npm, command: `npm install -g ${s.npm}`, loginCmd: s.loginCmd };
+}
 
 /**
  * Full path to `command`'s executable, or '' if not found. Scans PATH with PATHEXT,
@@ -90,23 +102,29 @@ export interface CliStatus {
   label: string;
   installed: boolean;
   loggedIn: boolean;
+  /** npm command that installs this CLI (for the one-click install button). */
+  installCmd: string;
+  /** Command the user runs to sign in after install. */
+  loginCmd: string;
 }
 
 /** Report install + login state for every CLI router (booleans only — no tokens). */
 export function cliStatuses(): CliStatus[] {
   return CLI_NAMES.map((name) => {
-    const binary = commandExists(CLI_SPECS[name].command);
+    const spec = CLI_SPECS[name];
+    const meta = { installCmd: `npm install -g ${spec.npm}`, loginCmd: spec.loginCmd };
+    const binary = commandExists(spec.command);
     // Jules manages its own Google login (jules login) and stores no local token file,
     // so we can't cheaply verify login — report it as available once the binary exists.
     // A Jules API key is an alternative when the CLI isn't installed.
     if (name === 'jules') {
       const usable = binary || !!readJulesApiKey();
-      return { name, label: CLI_SPECS[name].label, installed: usable, loggedIn: usable };
+      return { name, label: spec.label, installed: usable, loggedIn: usable, ...meta };
     }
     // Gemini can also be used via an API key even without the CLI logged in.
     const geminiKey = name === 'gemini' && !!readGeminiApiKey();
     const loggedIn = !!credFileFor(name) || geminiKey;
-    return { name, label: CLI_SPECS[name].label, installed: binary || geminiKey, loggedIn };
+    return { name, label: spec.label, installed: binary || geminiKey, loggedIn, ...meta };
   });
 }
 

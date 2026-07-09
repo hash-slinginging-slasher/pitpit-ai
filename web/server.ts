@@ -4,7 +4,11 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages } from '../src/db.js';
-import { cliStatuses } from '../src/providers/credentials.js';
+import { cliStatuses, cliInstall, CLI_NAMES, type CliName } from '../src/providers/credentials.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 7000;
@@ -149,6 +153,22 @@ const server = createServer(async (req, res) => {
     // Auth-CLI routers: install + login status (booleans only, never tokens).
     if (req.method === 'GET' && url.pathname === '/api/cli/status') {
       json(res, 200, { clis: cliStatuses(), agents: readAgents() });
+      return;
+    }
+
+    // Auth-CLI routers: one-click global install of the CLI's npm package.
+    if (req.method === 'POST' && url.pathname === '/api/cli/install') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const { name } = JSON.parse(body || '{}');
+      if (!CLI_NAMES.includes(name)) return json(res, 400, { error: 'unknown cli' });
+      const { command } = cliInstall(name as CliName);
+      try {
+        const { stdout, stderr } = await execAsync(command, { timeout: 300000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+        json(res, 200, { ok: true, command, output: (stdout + stderr).trim().slice(-2000), clis: cliStatuses() });
+      } catch (e: any) {
+        json(res, 200, { ok: false, command, error: String(e.stderr || e.stdout || e.message || '').slice(-2000), clis: cliStatuses() });
+      }
       return;
     }
 
