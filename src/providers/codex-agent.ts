@@ -16,9 +16,10 @@ import { readCodexOAuth } from './credentials.js';
  */
 
 const CHATGPT_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses';
-// ChatGPT-account Codex rejects some API model ids (e.g. gpt-5-codex). gpt-5 is the
-// broadly-available one; override per model with cli/codex/<model> if your plan differs.
-const DEFAULT_CODEX_MODEL = 'gpt-5';
+// ChatGPT-account Codex only accepts current models — gpt-5-codex/gpt-5/gpt-5.2/
+// gpt-5.3-codex are deprecated for ChatGPT sign-in. gpt-5.5 is the current default
+// (gpt-5.4-mini is the faster/cheaper option). Override with cli/codex/<model>.
+const DEFAULT_CODEX_MODEL = 'gpt-5.5';
 
 /** Wire model id from `cli/codex[/<model>]`. */
 export function codexModelFromId(model: string): string {
@@ -97,8 +98,8 @@ async function streamCodexTurn(
   });
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => '');
-    const hint = /model.*(not supported|does not exist|not found)/i.test(detail)
-      ? ` — try another model via cli/codex/<model> (e.g. gpt-5, gpt-5-mini, codex-mini-latest, o4-mini).`
+    const hint = /model.*(not supported|does not exist|not found|deprecated)/i.test(detail)
+      ? ` — try another model via cli/codex/<model> (current ChatGPT-account models: gpt-5.5, gpt-5.4-mini).`
       : '';
     const err: any = new Error(`Codex (ChatGPT) ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 300)}` : ''}${hint}`);
     err.status = res.status;
