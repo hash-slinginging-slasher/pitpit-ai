@@ -147,13 +147,17 @@ export async function runAgentWithRetry(
   input: string | ChatMessage[],
   options?: RunOptions & { maxRetries?: number },
 ) {
-  for (let attempt = 0, max = options?.maxRetries ?? 3; attempt <= max; attempt++) {
+  // Interactive CLI: retry a transient error (429 / 5xx) only briefly, then let the
+  // failover chain move to the next model. Aggressive per-model backoff (e.g. 1→2→4s)
+  // makes every turn on a rate-limited free model feel like a hang; the chain is the
+  // real resilience, so fail over fast instead. Override maxRetries for batch callers.
+  for (let attempt = 0, max = options?.maxRetries ?? 1; attempt <= max; attempt++) {
     try {
       return await runAgent(config, model, input, options);
     } catch (err: any) {
       const s = err?.status ?? err?.statusCode;
       if (!(s === 429 || (s >= 500 && s < 600)) || attempt === max) throw err;
-      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** attempt, 30000)));
+      await new Promise((r) => setTimeout(r, Math.min(400 * 2 ** attempt, 1500)));
     }
   }
   throw new Error('Unreachable');
