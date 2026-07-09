@@ -1,9 +1,12 @@
 import { tool } from '@openrouter/agent/tool';
 import { z } from 'zod';
-import { execFile } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
 
-const execFileAsync = promisify(execFile);
+// Use exec (not execFile) so the whole command is handed to the shell as a single
+// string. execFile on Windows re-quotes each arg, which double-escapes quotes inside
+// the command and mangles paths that contain spaces (e.g. `python "C:\a b\x.py"`).
+const execAsync = promisify(exec);
 
 const isWin = process.platform === 'win32';
 
@@ -36,10 +39,10 @@ export const shellTool = tool({
 
     const timeoutMs = (timeout ?? 120) * 1000;
     const shell = isWin ? process.env.COMSPEC || 'cmd.exe' : process.env.SHELL || '/bin/sh';
-    const shellArgs = isWin ? ['/d', '/s', '/c', command] : ['-c', command];
 
     try {
-      const { stdout, stderr } = await execFileAsync(shell, shellArgs, {
+      const { stdout, stderr } = await execAsync(command, {
+        shell,
         timeout: timeoutMs,
         maxBuffer: 256 * 1024,
         windowsHide: true,
