@@ -5,6 +5,7 @@ import { runClaudeOAuthAgent } from './anthropic-agent.js';
 import { runGeminiAgent } from './gemini-agent.js';
 import { runJulesAgent } from './jules-agent.js';
 import { runCodexOAuthAgent } from './codex-agent.js';
+import { runOpenCodeAgent } from './opencode-agent.js';
 import { readCodexAuth } from './credentials.js';
 
 /**
@@ -18,6 +19,8 @@ import { readCodexAuth } from './credentials.js';
  *                 Assist OAuth login (network path not validated on this machine).
  *   cli/jules   — Jules async agent (jules.googleapis.com): submits a task against a
  *                 connected GitHub repo and opens a PR. Needs a Jules API key.
+ *   cli/opencode — OpenCode local agent: delegates to `opencode run`, editing files
+ *                 in the current directory using OpenCode's own provider auth.
  */
 export async function runCliAgent(
   provider: ProviderId,
@@ -59,6 +62,11 @@ export async function runCliAgent(
       // Jules is an async agent that works on a connected GitHub repo and opens a PR
       // (it does NOT edit the local cwd or use our tools). Needs a Jules API key.
       return runJulesAgent(config, model, input, options);
+
+    case 'cli-opencode':
+      // OpenCode is a local open-source agent — delegate the turn to `opencode run`
+      // (it edits files in the current directory using its own provider auth).
+      return runOpenCodeAgent(config, model, input, options);
 
     default: {
       const name = provider.replace(/^cli-/, '');

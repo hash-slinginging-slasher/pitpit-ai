@@ -14,8 +14,8 @@ import { readJulesApiKey, readGeminiApiKey } from '../config.js';
  * receives boolean {installed, loggedIn} flags via cliStatuses().
  */
 
-export type CliName = 'claude' | 'codex' | 'gemini' | 'jules';
-export const CLI_NAMES: CliName[] = ['claude', 'codex', 'gemini', 'jules'];
+export type CliName = 'claude' | 'codex' | 'gemini' | 'jules' | 'opencode';
+export const CLI_NAMES: CliName[] = ['claude', 'codex', 'gemini', 'jules', 'opencode'];
 
 /** Static description of where each CLI lives and stores its login. */
 interface CliSpec {
@@ -48,6 +48,14 @@ const CLI_SPECS: Record<CliName, CliSpec> = {
     logoutCmd: '',
   },
   jules: { command: 'jules', label: 'Jules', credFiles: [h('.jules', 'auth.json'), h('.config', 'jules', 'auth.json')], npm: '@google/jules', loginCmd: 'jules login', logoutCmd: 'jules logout' },
+  opencode: {
+    command: 'opencode',
+    label: 'OpenCode',
+    credFiles: [h('.local', 'share', 'opencode', 'auth.json'), h('.config', 'opencode', 'auth.json')],
+    npm: 'opencode-ai',
+    loginCmd: 'opencode auth login',
+    logoutCmd: 'opencode auth logout',
+  },
 };
 
 /** The npm package + install command for a CLI (used by the install button). */

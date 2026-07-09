@@ -181,7 +181,8 @@ export type ProviderId =
   | 'cli-claude'
   | 'cli-codex'
   | 'cli-gemini'
-  | 'cli-jules';
+  | 'cli-jules'
+  | 'cli-opencode';
 
 /** Resolve the router for a model id from its prefix. Unknown/bare ids default to OpenRouter. */
 export function providerOf(model: string): ProviderId {
@@ -192,6 +193,7 @@ export function providerOf(model: string): ProviderId {
   if (model.startsWith('cli/codex')) return 'cli-codex';
   if (model.startsWith('cli/gemini')) return 'cli-gemini';
   if (model.startsWith('cli/jules')) return 'cli-jules';
+  if (model.startsWith('cli/opencode')) return 'cli-opencode';
   if (model.startsWith('openrouter/')) return 'openrouter';
   return 'openrouter';
 }

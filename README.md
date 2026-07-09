@@ -92,6 +92,7 @@ across different providers. Pick the router with the source selector above the m
 | `cli/codex` | **OpenAI Codex** | its own login | `cli/codex` |
 | `cli/gemini` | **Gemini** | API key or CLI login | `cli/gemini` |
 | `cli/jules` | **Jules** (async, opens a PR) | Jules API key | `cli/jules` |
+| `cli/opencode` | **OpenCode** (local agent, edits cwd) | its own provider auth | `cli/opencode` |
 
 - **NVIDIA / GitHub** are OpenAI-compatible APIs. Add the key in **Settings** (or `NVIDIA_API_KEY`
   / `GITHUB_MODELS_TOKEN` env), then browse their catalog under the source selector, or paste a
