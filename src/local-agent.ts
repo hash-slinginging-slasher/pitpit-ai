@@ -123,7 +123,16 @@ async function streamTurn(
   });
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => '');
-    const err: any = new Error(`Local server ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
+    // Name the host so a failover message is meaningful across providers (this runner
+    // is shared by local llama.cpp, NVIDIA build, and GitHub Models).
+    const host = (() => {
+      try {
+        return new URL(baseUrl).host;
+      } catch {
+        return baseUrl;
+      }
+    })();
+    const err: any = new Error(`${host} ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
     err.status = res.status;
     throw err;
   }
