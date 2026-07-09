@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { resolve, delimiter } from 'path';
 import { readJulesApiKey, readGeminiApiKey } from '../config.js';
@@ -27,30 +27,62 @@ interface CliSpec {
   label: string;
   /** npm package that provides the CLI (for the one-click install button). */
   npm: string;
-  /** Command to log in after install, shown as a hint. */
+  /** Interactive login command (browser OAuth / TUI) — run in a real terminal. */
   loginCmd: string;
+  /** Logout command, if the CLI has one; empty means "just delete the token file". */
+  logoutCmd: string;
 }
 
 const HOME = homedir();
 const h = (...p: string[]) => resolve(HOME, ...p);
 
 const CLI_SPECS: Record<CliName, CliSpec> = {
-  claude: { command: 'claude', label: 'Claude Code', credFiles: [h('.claude', '.credentials.json')], npm: '@anthropic-ai/claude-code', loginCmd: 'claude' },
-  codex: { command: 'codex', label: 'OpenAI Codex', credFiles: [h('.codex', 'auth.json')], npm: '@openai/codex', loginCmd: 'codex login' },
+  claude: { command: 'claude', label: 'Claude Code', credFiles: [h('.claude', '.credentials.json')], npm: '@anthropic-ai/claude-code', loginCmd: 'claude', logoutCmd: '' },
+  codex: { command: 'codex', label: 'OpenAI Codex', credFiles: [h('.codex', 'auth.json')], npm: '@openai/codex', loginCmd: 'codex login', logoutCmd: 'codex logout' },
   gemini: {
     command: 'gemini',
     label: 'Gemini CLI',
     credFiles: [h('.gemini', 'oauth_creds.json'), h('.config', 'gcloud', 'application_default_credentials.json')],
     npm: '@google/gemini-cli',
     loginCmd: 'gemini',
+    logoutCmd: '',
   },
-  jules: { command: 'jules', label: 'Jules', credFiles: [h('.jules', 'auth.json'), h('.config', 'jules', 'auth.json')], npm: '@google/jules', loginCmd: 'jules login' },
+  jules: { command: 'jules', label: 'Jules', credFiles: [h('.jules', 'auth.json'), h('.config', 'jules', 'auth.json')], npm: '@google/jules', loginCmd: 'jules login', logoutCmd: 'jules logout' },
 };
 
 /** The npm package + install command for a CLI (used by the install button). */
 export function cliInstall(name: CliName): { npm: string; command: string; loginCmd: string } {
   const s = CLI_SPECS[name];
   return { npm: s.npm, command: `npm install -g ${s.npm}`, loginCmd: s.loginCmd };
+}
+
+/** Interactive login command for a CLI (run in a real terminal — browser/TTY OAuth). */
+export function cliLoginCmd(name: CliName): string {
+  return CLI_SPECS[name].loginCmd;
+}
+
+/** Logout command, or '' if logout is done by deleting the token file. */
+export function cliLogoutCmd(name: CliName): string {
+  return CLI_SPECS[name].logoutCmd;
+}
+
+/**
+ * Delete any stored credential files for a CLI — a reliable local logout for the
+ * file-based CLIs (claude/codex/gemini). Returns how many files were removed.
+ */
+export function deleteCredFiles(name: CliName): number {
+  let removed = 0;
+  for (const p of CLI_SPECS[name].credFiles) {
+    try {
+      if (existsSync(p)) {
+        unlinkSync(p);
+        removed++;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return removed;
 }
 
 /**

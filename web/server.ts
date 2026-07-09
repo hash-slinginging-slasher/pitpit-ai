@@ -4,11 +4,33 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages } from '../src/db.js';
-import { cliStatuses, cliInstall, CLI_NAMES, type CliName } from '../src/providers/credentials.js';
-import { exec } from 'child_process';
+import { cliStatuses, cliInstall, cliLoginCmd, cliLogoutCmd, deleteCredFiles, CLI_NAMES, type CliName } from '../src/providers/credentials.js';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+
+/**
+ * Launch `command` in a NEW visible terminal window so an interactive login
+ * (browser OAuth or a TUI) can complete. Detached — we don't wait for it; the UI
+ * polls /api/cli/status to see when the login lands. `command` is a fixed spec value
+ * (no user input), so there is no injection surface.
+ */
+function openInTerminal(command: string): void {
+  try {
+    if (process.platform === 'win32') {
+      // start "" cmd /k "<command>" → new console that stays open with the CLI running.
+      spawn('cmd', ['/c', 'start', '""', 'cmd', '/k', command], { detached: true, windowsHide: false, stdio: 'ignore' }).unref();
+    } else if (process.platform === 'darwin') {
+      spawn('osascript', ['-e', `tell app "Terminal" to do script "${command.replace(/"/g, '\\"')}"`], { detached: true, stdio: 'ignore' }).unref();
+    } else {
+      // Best-effort on Linux: try a couple of common terminals, else run detached.
+      spawn('/bin/sh', ['-c', `x-terminal-emulator -e ${command} || gnome-terminal -- ${command} || ${command}`], { detached: true, stdio: 'ignore' }).unref();
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 7000;
@@ -169,6 +191,36 @@ const server = createServer(async (req, res) => {
       } catch (e: any) {
         json(res, 200, { ok: false, command, error: String(e.stderr || e.stdout || e.message || '').slice(-2000), clis: cliStatuses() });
       }
+      return;
+    }
+
+    // Auth-CLI routers: open a terminal for the CLI's interactive login (browser OAuth).
+    if (req.method === 'POST' && url.pathname === '/api/cli/login') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const { name } = JSON.parse(body || '{}');
+      if (!CLI_NAMES.includes(name)) return json(res, 400, { error: 'unknown cli' });
+      const loginCmd = cliLoginCmd(name as CliName);
+      openInTerminal(loginCmd);
+      json(res, 200, { ok: true, loginCmd, note: 'A terminal window opened — complete the sign-in there.' });
+      return;
+    }
+
+    // Auth-CLI routers: log out (delete the stored token, or run the CLI's logout).
+    if (req.method === 'POST' && url.pathname === '/api/cli/logout') {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const { name } = JSON.parse(body || '{}');
+      if (!CLI_NAMES.includes(name)) return json(res, 400, { error: 'unknown cli' });
+      const removed = deleteCredFiles(name as CliName);
+      const logoutCmd = cliLogoutCmd(name as CliName);
+      // If there was no local token file to remove, fall back to the CLI's logout command.
+      let ranLogout = false;
+      if (!removed && logoutCmd) {
+        openInTerminal(logoutCmd);
+        ranLogout = true;
+      }
+      json(res, 200, { ok: true, removed, ranLogout, clis: cliStatuses() });
       return;
     }
 

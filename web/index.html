@@ -387,9 +387,17 @@
                 ${!c.installed
                   ? `<button class="btn-ghost" data-install="${c.name}" style="margin:6px 0 6px;padding:8px 12px;">⬇ Install ${pkg}</button>`
                   : ""}
-                ${inChain
-                  ? `<button class="add inchain" data-rm="${id}">✓ ${activeTab} #${pos + 1} — remove</button>`
-                  : `<button class="add" data-add="${id}">+ Add to ${agentDef().label}</button>`}
+                ${c.installed && !c.loggedIn && c.name !== "jules"
+                  ? `<button class="add" data-login="${c.name}" style="background:transparent;border-color:var(--good);color:var(--good);margin-bottom:6px;">🔑 Sign in (opens a terminal)</button>`
+                  : ""}
+                <div style="display:flex; gap:6px; align-items:stretch;">
+                  <div style="flex:1;">${inChain
+                    ? `<button class="add inchain" data-rm="${id}" style="width:100%;margin-top:0;">✓ ${activeTab} #${pos + 1} — remove</button>`
+                    : `<button class="add" data-add="${id}" style="width:100%;margin-top:0;">+ Add to ${agentDef().label}</button>`}</div>
+                  ${c.installed && c.loggedIn
+                    ? `<button class="btn-ghost" data-logout="${c.name}" style="margin:0;padding:8px 12px;white-space:nowrap;">logout</button>`
+                    : ""}
+                </div>
               </div>`;
           })
           .join("");
@@ -399,7 +407,59 @@
         $("grid").querySelectorAll("button[data-copy]").forEach((b) =>
           b.addEventListener("click", () => copyCmd(b.dataset.copy, b)),
         );
+        $("grid").querySelectorAll("button[data-login]").forEach((b) =>
+          b.addEventListener("click", () => loginCli(b.dataset.login, b)),
+        );
+        $("grid").querySelectorAll("button[data-logout]").forEach((b) =>
+          b.addEventListener("click", () => logoutCli(b.dataset.logout, b)),
+        );
         wireGridButtons();
+      }
+
+      async function loginCli(name, btn) {
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "terminal opened — finish sign-in there…";
+        try {
+          await fetch("/api/cli/login", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          });
+          // Poll until the login lands (browser OAuth can take a bit).
+          await pollCliStatus(name, 40);
+          btn.disabled = false; btn.textContent = orig;
+        } catch (e) {
+          btn.textContent = "✗ " + e.message; btn.disabled = false;
+          setTimeout(() => (btn.textContent = orig), 2500);
+        }
+      }
+
+      async function pollCliStatus(name, tries) {
+        for (; tries > 0; tries--) {
+          await new Promise((r) => setTimeout(r, 3000));
+          try {
+            const data = await (await fetch("/api/cli/status")).json();
+            if (data.clis) cliStatus = data.clis;
+            const c = cliStatus.find((x) => x.name === name);
+            if (c && c.loggedIn) { if (source === "cli") render(); return; }
+          } catch (e) {}
+        }
+      }
+
+      async function logoutCli(name, btn) {
+        const orig = btn.textContent;
+        btn.disabled = true; btn.textContent = "…";
+        try {
+          const r = await (await fetch("/api/cli/logout", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          })).json();
+          if (r.clis) cliStatus = r.clis;
+          render();
+        } catch (e) {
+          btn.textContent = "✗ error"; btn.disabled = false;
+          setTimeout(() => (btn.textContent = orig), 2000);
+        }
       }
 
       async function copyCmd(text, btn) {
