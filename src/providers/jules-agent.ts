@@ -125,6 +125,45 @@ function latestPrompt(input: string | ChatMessage[]): string {
  * Jules is async, so this returns the session link; apply results later with
  * `jules remote pull --session <id> --apply` or `jules teleport <id>`.
  */
+/** Run the jules CLI with fixed args (+ optional stdin), capturing output. */
+function julesExec(
+  julesPath: string,
+  args: string[],
+  opts?: { stdin?: string; onStdout?: (s: string) => void; signal?: AbortSignal },
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise, reject) => {
+    // Run without shell so args are passed as a safe argv (no injection, no DEP0190).
+    // On Windows the target is an npm `.cmd` shim, which needs cmd.exe to launch.
+    const isWin = process.platform === 'win32';
+    const cmd = isWin ? process.env.COMSPEC || 'cmd.exe' : julesPath;
+    const fullArgs = isWin ? ['/d', '/s', '/c', julesPath, ...args] : args;
+    const child = spawn(cmd, fullArgs, { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => {
+      const s = d.toString();
+      stdout += s;
+      opts?.onStdout?.(s);
+    });
+    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.on('error', reject);
+    opts?.signal?.addEventListener('abort', () => child.kill(), { once: true });
+    child.on('close', (code) => resolvePromise({ code: code ?? 0, stdout, stderr }));
+    if (opts?.stdin !== undefined) child.stdin.write(opts.stdin);
+    child.stdin.end();
+  });
+}
+
+/** GitHub repos (owner/repo) connected to Jules, via `jules remote list --repo`. */
+async function connectedRepos(julesPath: string, signal?: AbortSignal): Promise<string[]> {
+  try {
+    const { stdout } = await julesExec(julesPath, ['remote', 'list', '--repo'], { signal });
+    return [...stdout.matchAll(/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)/g)].map((m) => m[1]);
+  } catch {
+    return [];
+  }
+}
+
 async function runJulesCliAgent(
   julesPath: string,
   input: string | ChatMessage[],
@@ -132,43 +171,40 @@ async function runJulesCliAgent(
 ): Promise<AgentRunResult> {
   const prompt = latestPrompt(input);
   if (!prompt.trim()) throw new Error('cli/jules: empty prompt.');
-  options?.onEvent?.({ type: 'reasoning', delta: 'Submitting task to Jules via the jules CLI…\n' });
 
+  // Jules only works on a GitHub repo that's connected to it. Validate up front so we
+  // give a clear error instead of jules's silent no-op (it prints to stderr + exits 0).
   const slug = await remoteGithubSlug(process.cwd());
-  const args = ['new'];
-  if (slug) args.push('--repo', `${slug.owner}/${slug.repo}`);
+  const target = slug ? `${slug.owner}/${slug.repo}` : '';
+  const repos = await connectedRepos(julesPath, options?.signal);
+  const note = repos.length ? `Connected repos: ${repos.join(', ')}.` : 'No repos are connected to Jules yet (or you are not logged in — run `jules login`).';
+  if (!target) {
+    throw new Error(`cli/jules works on a GitHub repo connected to Jules — run coder inside one. ${note}`);
+  }
+  if (repos.length && !repos.some((r) => r.toLowerCase() === target.toLowerCase())) {
+    throw new Error(`This repo (${target}) isn't connected to Jules. ${note} Connect it at https://jules.google/docs, or run coder from a connected repo.`);
+  }
 
-  return new Promise<AgentRunResult>((resolvePromise, reject) => {
-    // shell:true lets Windows run the npm `.cmd` shim; args are fixed (no user data),
-    // and the prompt goes via stdin, so there is no command-injection surface.
-    const child = spawn(`"${julesPath}"`, args, { cwd: process.cwd(), shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    child.stdout.on('data', (d) => {
-      const s = d.toString();
-      out += s;
-      options?.onEvent?.({ type: 'text', delta: s });
-    });
-    child.stderr.on('data', (d) => {
-      const s = d.toString();
-      err += s;
-      options?.onEvent?.({ type: 'reasoning', delta: s });
-    });
-    child.on('error', reject);
-    options?.signal?.addEventListener('abort', () => child.kill(), { once: true });
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolvePromise({ text: out.trim() || 'Jules session submitted.', usage: { inputTokens: 0, outputTokens: 0 }, output: [] });
-      } else {
-        const hint = /login|auth|sign in|unauthenticated/i.test(out + err)
-          ? ' Run `jules login` to sign in to Jules first.'
-          : '';
-        reject(new Error(`jules exited with code ${code}.${hint}${err ? ` ${err.trim().slice(0, 200)}` : ''}`));
-      }
-    });
-    child.stdin.write(prompt);
-    child.stdin.end();
+  options?.onEvent?.({ type: 'text', delta: `Submitting task to Jules for ${target}…\n` });
+  const { code, stdout, stderr } = await julesExec(julesPath, ['new', '--repo', target], {
+    stdin: prompt,
+    onStdout: (s) => options?.onEvent?.({ type: 'text', delta: s }),
+    signal: options?.signal,
   });
+
+  // jules exits 0 even on failure and writes errors to stderr — so treat empty stdout
+  // or an "Error:" line as a failure and surface the real message.
+  if (code !== 0 || !stdout.trim() || /^\s*error[: ]/im.test(stderr)) {
+    const detail = stderr.trim() || stdout.trim() || 'no output from jules';
+    const hint = /login|auth|sign in|unauthenticated/i.test(detail) ? ' Run `jules login` first.' : '';
+    throw new Error(`jules new failed: ${detail.slice(0, 300)}.${hint}`);
+  }
+
+  const text =
+    stdout.trim() +
+    `\n\n(Jules works asynchronously on ${target} and opens a PR. Bring the result back with ` +
+    '`jules remote pull --session <id> --apply` or `jules teleport <id>`.)';
+  return { text, usage: { inputTokens: 0, outputTokens: 0 }, output: [] };
 }
 
 export async function runJulesAgent(
