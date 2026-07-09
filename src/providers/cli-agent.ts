@@ -4,6 +4,7 @@ import type { ChatMessage } from '../agent.js';
 import { runClaudeOAuthAgent } from './anthropic-agent.js';
 import { runGeminiAgent } from './gemini-agent.js';
 import { runJulesAgent } from './jules-agent.js';
+import { runCodexOAuthAgent } from './codex-agent.js';
 import { readCodexAuth } from './credentials.js';
 
 /**
@@ -42,12 +43,12 @@ export async function runCliAgent(
           options,
         );
       }
-      throw new Error(
-        auth.subscriptionOnly
-          ? 'cli/codex is signed in with a ChatGPT subscription, whose backend is not supported yet. ' +
-            'Run `codex login --api-key <key>` (or set OPENAI_API_KEY) to use cli/codex.'
-          : 'Codex is not logged in — run `codex` and sign in first.',
-      );
+      if (auth.subscriptionOnly) {
+        // ChatGPT-subscription login → experimental Responses-API proxy to the
+        // ChatGPT backend (reverse-engineered; may need iteration).
+        return runCodexOAuthAgent(config, model, input, options);
+      }
+      throw new Error('Codex is not logged in — run `codex login` and sign in first.');
     }
 
     case 'cli-gemini':

@@ -262,6 +262,80 @@ export function readCodexAuth(): CodexAuth {
   return { subscriptionOnly: hasOAuth };
 }
 
+// --- Codex ChatGPT-subscription OAuth (experimental) --------------------------
+// The `codex login` (ChatGPT) flow stores tokens in ~/.codex/auth.json. The Codex
+// CLI then calls the ChatGPT backend's Responses API with the access token +
+// chatgpt-account-id header. This mirrors that; endpoints/ids are undocumented and
+// may change — validated only on a machine with a real Codex subscription login.
+const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+
+/** Decode a JWT payload (no verification) — used to read exp + the ChatGPT account id. */
+function decodeJwt(token: string): any {
+  try {
+    const part = token.split('.')[1] ?? '';
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(Buffer.from(b64, 'base64').toString('utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+export interface CodexOAuth {
+  accessToken: string;
+  accountId: string;
+}
+
+function persistCodexTokens(data: any, tok: { access_token?: string; id_token?: string; refresh_token?: string }): void {
+  const path = credFileFor('codex');
+  if (!path) return;
+  try {
+    data.tokens = data.tokens || {};
+    if (tok.access_token) data.tokens.access_token = tok.access_token;
+    if (tok.id_token) data.tokens.id_token = tok.id_token;
+    if (tok.refresh_token) data.tokens.refresh_token = tok.refresh_token;
+    data.last_refresh = new Date().toISOString();
+    writeFileSync(path, JSON.stringify(data, null, 2));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+async function refreshCodexToken(refreshToken: string, data: any): Promise<{ access: string; id: string }> {
+  const r = await fetch('https://auth.openai.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: CODEX_CLIENT_ID, scope: 'openid profile email' }),
+  });
+  if (!r.ok) throw new Error(`Codex token refresh failed (${r.status}). Run \`codex login\` again.`);
+  const j = (await r.json()) as { access_token: string; id_token?: string; refresh_token?: string };
+  persistCodexTokens(data, j);
+  return { access: j.access_token, id: j.id_token ?? '' };
+}
+
+/** Resolve a usable ChatGPT-subscription access token + account id, refreshing if expired. */
+export async function readCodexOAuth(): Promise<CodexOAuth> {
+  const data = readCredJson('codex');
+  const t = data.tokens;
+  if (!t?.access_token) {
+    throw new Error('Codex is not signed in with a ChatGPT subscription. Run `codex login` (or set an OpenAI API key).');
+  }
+  let accessToken: string = t.access_token;
+  let idToken: string = t.id_token ?? '';
+  const claims = decodeJwt(accessToken);
+  const expMs = Number(claims.exp ?? 0) * 1000;
+  if (expMs && Date.now() > expMs - 60_000 && t.refresh_token) {
+    const refreshed = await refreshCodexToken(t.refresh_token, data);
+    accessToken = refreshed.access;
+    idToken = refreshed.id || idToken;
+  }
+  let accountId: string = t.account_id || '';
+  if (!accountId && idToken) {
+    const idc = decodeJwt(idToken);
+    accountId = idc['https://api.openai.com/auth']?.chatgpt_account_id || idc.chatgpt_account_id || '';
+  }
+  return { accessToken, accountId };
+}
+
 // ---------------------------------------------------------------------------
 // Gemini (cli/gemini). The `gemini` CLI stores an OAuth token under
 // ~/.gemini/oauth_creds.json and talks to Google Code Assist. That backend is
