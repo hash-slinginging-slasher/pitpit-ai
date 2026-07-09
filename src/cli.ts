@@ -226,6 +226,9 @@ async function main() {
   const clampActive = () => {
     if (activeIndex >= chain.length) activeIndex = 0;
   };
+  // While a turn is running we still track UI chain changes, but silently — no prompt
+  // redraw or "set from UI" spam interleaved with the model's response.
+  let turnActive = false;
   applyTheme(config.theme || 'default');
   setWindowTitle(config.name); // name the terminal window on launch
 
@@ -308,20 +311,31 @@ async function main() {
 
   // Follow the coder chain chosen in the web UI. The UI writes agent.config.json;
   // we watch it and update the chain live — no need to type model names here.
+  // fs.watch fires a BURST of events per save on Windows, and a read can catch the
+  // file mid-write (partial/empty JSON). So we debounce and ignore empty reads,
+  // announcing only a genuine, settled change of the active model.
+  let watchTimer: ReturnType<typeof setTimeout> | null = null;
   const watcher = watch(CONFIG_PATH, () => {
-    const next = readCoderChain();
-    if (next.join('|') !== chain.join('|')) {
-      const primaryChanged = next[activeIndex] !== chain[activeIndex];
+    if (watchTimer) return;
+    watchTimer = setTimeout(() => {
+      watchTimer = null;
+      const next = readCoderChain();
+      if (!next.length) return; // mid-write / cleared — keep the current chain
+      if (next.join('|') === chain.join('|')) return; // no real change
+      const prevActive = chain[activeIndex];
       chain = next;
       clampActive();
-      if (primaryChanged) {
+      if (turnActive) return; // update silently mid-turn; the next prompt reflects it
+      const nowActive = chain[activeIndex];
+      if (nowActive && nowActive !== prevActive) {
         process.stdout.write(
-          `\n${C.magenta}>> coder model -> ${shortName(chain[activeIndex] ?? '')}${C.reset} ${C.dim}(set from UI)${C.reset}\n`,
+          `\n${C.magenta}>> coder model -> ${shortName(nowActive)}${C.reset} ${C.dim}(set from UI)${C.reset}\n`,
         );
       }
       rl.setPrompt(promptText());
       rl.prompt(true);
-    }
+    }, 250);
+    watchTimer.unref?.();
   });
   watcher.unref?.(); // don't let the file watcher keep the process alive on exit
 
@@ -685,6 +699,7 @@ async function main() {
     // Track which mutating tools ran this turn — if any, we auto-commit afterward.
     const mutated = new Set<string>();
 
+    turnActive = true; // suppress live "set from UI" chain announcements during the turn
     try {
       const agentInput = isInit ? taskInput : messages.length > 1 ? messages : input;
       const result = await runAgentChain(config, activeChain, agentInput, {
@@ -733,6 +748,8 @@ async function main() {
     } catch (err: any) {
       renderer.done();
       console.log(`\n${C.yellow}  All coder models failed: ${err.message}${C.reset}\n`);
+    } finally {
+      turnActive = false;
     }
   }
 

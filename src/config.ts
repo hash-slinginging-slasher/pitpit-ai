@@ -1,7 +1,30 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { release, version } from 'os';
+
+/**
+ * Write a file atomically: write a temp file then rename over the target, so a
+ * concurrent reader (e.g. the CLI's fs.watch on agent.config.json) never sees a
+ * half-written / empty file. Falls back to a direct write if rename is blocked.
+ */
+function writeFileAtomic(path: string, data: string): void {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, data);
+    renameSync(tmp, path);
+  } catch {
+    try {
+      writeFileSync(path, data);
+    } finally {
+      try {
+        if (existsSync(tmp)) unlinkSync(tmp);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
 
 /**
  * Detect the host OS + shell so the agent generates commands that actually run
@@ -72,7 +95,7 @@ export function updateConfigFile(patch: Record<string, unknown>): void {
     /* start fresh */
   }
   Object.assign(file, patch);
-  writeFileSync(CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
+  writeFileAtomic(CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
 }
 
 /** The primary (first) model of an agent's chain, or '' if none configured. */
@@ -113,7 +136,7 @@ export function readSecrets(): Record<string, string> {
 /** Merge and persist secrets written from the Settings UI. */
 export function saveSecrets(patch: Record<string, string>): void {
   const next = { ...readSecrets(), ...patch };
-  writeFileSync(SECRETS_PATH, JSON.stringify(next, null, 2) + '\n');
+  writeFileAtomic(SECRETS_PATH, JSON.stringify(next, null, 2) + '\n');
 }
 
 /**
@@ -379,6 +402,6 @@ export function saveAgentChain(kind: AgentKind, models: string[]): AgentChains {
   agents[kind] = models.filter((m) => typeof m === 'string' && m.length > 0);
   file.agents = agents;
   delete file.model; // drop the legacy field once migrated
-  writeFileSync(CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
+  writeFileAtomic(CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
   return agents;
 }
