@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { resolve, delimiter } from 'path';
+import { readJulesApiKey, readGeminiApiKey } from '../config.js';
 
 /**
  * Credential resolution for the subscription-CLI routers (cli/claude, cli/codex,
@@ -80,12 +81,16 @@ export interface CliStatus {
 
 /** Report install + login state for every CLI router (booleans only — no tokens). */
 export function cliStatuses(): CliStatus[] {
-  return CLI_NAMES.map((name) => ({
-    name,
-    label: CLI_SPECS[name].label,
-    installed: commandExists(CLI_SPECS[name].command),
-    loggedIn: !!credFileFor(name),
-  }));
+  return CLI_NAMES.map((name) => {
+    // Jules is API-key based (no local CLI); Gemini can use an API key too.
+    if (name === 'jules') {
+      const hasKey = !!readJulesApiKey();
+      return { name, label: CLI_SPECS[name].label, installed: hasKey, loggedIn: hasKey };
+    }
+    const installed = commandExists(CLI_SPECS[name].command);
+    const loggedIn = !!credFileFor(name) || (name === 'gemini' && !!readGeminiApiKey());
+    return { name, label: CLI_SPECS[name].label, installed: installed || (name === 'gemini' && !!readGeminiApiKey()), loggedIn };
+  });
 }
 
 /** Parse a JSON credential file, tolerating a UTF-8 BOM. Throws if missing/invalid. */

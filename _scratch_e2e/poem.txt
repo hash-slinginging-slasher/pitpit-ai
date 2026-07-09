@@ -1,0 +1,2 @@
+Routers guide the data flow,
+Packets find where they should go.

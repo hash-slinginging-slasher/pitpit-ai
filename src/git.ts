@@ -98,6 +98,29 @@ export async function commitAll(dir: string, subject: string, body?: string): Pr
   }
 }
 
+/**
+ * Parse the GitHub owner/repo of a repo's `origin` remote, or null if there is no
+ * origin or it isn't a GitHub URL. Handles both https and ssh remote forms.
+ */
+export async function remoteGithubSlug(dir: string): Promise<{ owner: string; repo: string } | null> {
+  try {
+    const url = (await git(dir, ['remote', 'get-url', 'origin'])).trim();
+    const m = url.match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/i);
+    return m ? { owner: m[1], repo: m[2] } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Current branch name in `dir`, or '' if unknown/detached. */
+export async function currentBranch(dir: string): Promise<string> {
+  try {
+    return (await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim().replace(/^HEAD$/, '');
+  } catch {
+    return '';
+  }
+}
+
 /** Subjects of the most recent `n` commits, newest first. Empty if none / not a repo. */
 export async function recentCommits(dir: string, n = 5): Promise<string[]> {
   try {

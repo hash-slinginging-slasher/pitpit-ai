@@ -91,7 +91,7 @@ across different providers. Pick the router with the source selector above the m
 | `cli/claude` | **Claude Code** subscription | its own login | `cli/claude` or `cli/claude/claude-opus-4-1` |
 | `cli/codex` | **OpenAI Codex** | its own login | `cli/codex` |
 | `cli/gemini` | **Gemini** | API key or CLI login | `cli/gemini` |
-| `cli/jules` | **Jules** *(experimental)* | its own login | `cli/jules` |
+| `cli/jules` | **Jules** (async, opens a PR) | Jules API key | `cli/jules` |
 
 - **NVIDIA / GitHub** are OpenAI-compatible APIs. Add the key in **Settings** (or `NVIDIA_API_KEY`
   / `GITHUB_MODELS_TOKEN` env), then browse their catalog under the source selector, or paste a
@@ -102,7 +102,13 @@ across different providers. Pick the router with the source selector above the m
   Anthropic Messages API. `cli/codex` works when Codex is logged in with an API key. `cli/gemini`
   uses a **Gemini API key** ([aistudio.google.com/apikey](https://aistudio.google.com/apikey), set
   in Settings or `GEMINI_API_KEY`) when present — the reliable path — otherwise the Gemini CLI's own
-  Code Assist login. `cli/jules` is scaffolded but not yet wired to a backend.
+  Code Assist login.
+- **`cli/jules` is different from every other router.** [Jules](https://jules.google) is an *async*
+  agent that works on a **connected GitHub repo in its own VM and opens a pull request** — it does
+  **not** edit your local files or use the agent's tools. Add a Jules API key (jules.google →
+  Settings, or `JULES_API_KEY`), run `coder` inside a repo whose GitHub `origin` is connected to
+  Jules, and a turn submits the task, streams Jules's plan/progress, and returns the session + PR
+  links. Pin a specific repo with `JULES_SOURCE=sources/github-<owner>-<repo>`.
 - **Pin a model** on the CLI routers with a suffix: `cli/claude/claude-opus-4-1`,
   `cli/gemini/gemini-2.0-flash`, `cli/codex/gpt-4o`. Without a suffix a sensible default is used.
 

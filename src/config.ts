@@ -219,6 +219,20 @@ export function readGeminiApiKey(): string {
   return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || readSecrets().geminiApiKey || '';
 }
 
+/** Resolve the Jules API key (jules.google → Settings). Env JULES_API_KEY overrides secrets. */
+export function readJulesApiKey(): string {
+  return process.env.JULES_API_KEY || readSecrets().julesApiKey || '';
+}
+
+/**
+ * Optional explicit Jules source (a `sources/github-owner-repo` resource name). When
+ * unset, cli/jules matches the current project's GitHub origin against your Jules
+ * sources. Env JULES_SOURCE overrides the Settings value.
+ */
+export function readJulesSource(): string {
+  return process.env.JULES_SOURCE || readSecrets().julesSource || '';
+}
+
 /**
  * Does this model id require a secret key that isn't currently available? Used by the
  * CLI to decide whether to demand a key before a turn. Local + cli/* need no key here

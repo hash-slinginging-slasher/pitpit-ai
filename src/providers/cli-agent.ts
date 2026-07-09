@@ -3,6 +3,7 @@ import { runOpenAICompatibleAgent, type AgentRunOptions, type AgentRunResult } f
 import type { ChatMessage } from '../agent.js';
 import { runClaudeOAuthAgent } from './anthropic-agent.js';
 import { runGeminiAgent } from './gemini-agent.js';
+import { runJulesAgent } from './jules-agent.js';
 import { readCodexAuth } from './credentials.js';
 
 /**
@@ -14,7 +15,8 @@ import { readCodexAuth } from './credentials.js';
  *                 the ChatGPT-subscription backend is not validated here.
  *   cli/gemini  — Gemini generateContent via a Gemini API key, or the CLI's Code
  *                 Assist OAuth login (network path not validated on this machine).
- *   cli/jules   — no stable public completion API yet (experimental).
+ *   cli/jules   — Jules async agent (jules.googleapis.com): submits a task against a
+ *                 connected GitHub repo and opens a PR. Needs a Jules API key.
  */
 export async function runCliAgent(
   provider: ProviderId,
@@ -53,7 +55,9 @@ export async function runCliAgent(
       return runGeminiAgent(config, model, input, options);
 
     case 'cli-jules':
-      throw new Error('cli/jules is experimental: Jules has no stable public completion API wired up yet.');
+      // Jules is an async agent that works on a connected GitHub repo and opens a PR
+      // (it does NOT edit the local cwd or use our tools). Needs a Jules API key.
+      return runJulesAgent(config, model, input, options);
 
     default: {
       const name = provider.replace(/^cli-/, '');
