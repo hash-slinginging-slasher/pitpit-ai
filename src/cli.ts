@@ -6,6 +6,7 @@ import { runAgentChain, type ChatMessage, type AgentEvent } from './agent.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
 import { hasGit, isRepo, initRepo, commitAll, recentCommits } from './git.js';
+import { resolveMentions } from './mentions.js';
 
 /** Tools that change files on disk — a turn using any of these triggers an auto-commit. */
 const MUTATING_TOOLS = new Set([
@@ -498,6 +499,7 @@ async function main() {
           `  ${C.cyan}/memory${C.reset}        show project memory (${C.reset}${C.cyan}/memory save${C.reset}${C.dim} to update now, ${C.reset}${C.cyan}/memory clear${C.reset}${C.dim} to wipe)${C.reset}\n` +
           `  ${C.cyan}/autocommit${C.reset}    auto-commit file changes to git (currently ${autoCommit ? 'on' : 'off'}; ${C.reset}${C.cyan}/autocommit on|off${C.reset})\n` +
           `  ${C.cyan}/clear${C.reset}         clear the conversation context (alias: ${C.reset}${C.cyan}/new${C.reset})\n` +
+          `  ${C.cyan}@<name>${C.reset}        attach files by fuzzy name (e.g. ${C.reset}${C.cyan}@prd${C.reset}${C.dim}) — inlined for the model to read${C.reset}\n` +
           `  ${C.cyan}/help${C.reset}          show this help\n` +
           `  ${C.cyan}/exit${C.reset}          quit\n` +
           `\n  ${C.dim}To change models: open the web UI (start.bat), Coder tab.${C.reset}\n`,
@@ -707,13 +709,24 @@ async function main() {
 
     // /init runs a one-off "analyze the project" task (not added to the chat history).
     const isInit = wantInit;
-    const taskInput = isInit ? INIT_PROMPT : input;
+    // What actually gets sent to the model this turn. For /init it's the analyze prompt;
+    // otherwise the user input with any @mentions (e.g. @prd) expanded to inlined files.
+    let turnContent = INIT_PROMPT;
     if (isInit) {
       console.log(`\n${C.dim}Analyzing project and writing ${CONTEXT_FILE}...${C.reset}`);
     } else {
-      messages.push({ role: 'user', content: input });
+      const { text: expanded, matched, unmatched, truncated } = await resolveMentions(input, workDir);
+      turnContent = expanded;
+      if (matched.length) {
+        const files = matched.flatMap((m) => m.files);
+        console.log(
+          `  ${C.dim}@mention -> attached ${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}${truncated ? ' (truncated to fit context)' : ''}${C.reset}`,
+        );
+      }
+      for (const t of unmatched) console.log(`  ${C.yellow}no file matched @${t}${C.reset}`);
+      messages.push({ role: 'user', content: expanded });
       await ensureSession();
-      await log('user', input);
+      await log('user', expanded);
       if (sessionId != null) await setSessionTitle(sessionId, input.slice(0, 80)).catch(() => {});
     }
     console.log();
@@ -724,7 +737,7 @@ async function main() {
 
     turnActive = true; // suppress live "set from UI" chain announcements during the turn
     try {
-      const agentInput = isInit ? taskInput : messages.length > 1 ? messages : input;
+      const agentInput = isInit ? turnContent : messages.length > 1 ? messages : turnContent;
       const result = await runAgentChain(config, activeChain, agentInput, {
         onEvent: (e) => {
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
