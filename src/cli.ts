@@ -1,12 +1,13 @@
-import { createInterface, type Interface } from 'readline';
-import { watch, readFileSync, existsSync } from 'fs';
+import { createInterface, emitKeypressEvents, type Interface } from 'readline';
+import { watch, readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
 import { loadConfig, readAgents, updateConfigFile, providerOf, CONFIG_PATH, type AgentConfig } from './config.js';
-import { runAgentChain, type ChatMessage, type AgentEvent } from './agent.js';
+import { runAgentChain, isAbortError, type ChatMessage, type AgentEvent } from './agent.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
 import { hasGit, isRepo, initRepo, commitAll, recentCommits } from './git.js';
-import { resolveMentions } from './mentions.js';
+import { resolveMentions, mentionCompletions } from './mentions.js';
+import { loadSkillsFor, skillIndex } from './skills.js';
 
 /** Tools that change files on disk — a turn using any of these triggers an auto-commit. */
 const MUTATING_TOOLS = new Set([
@@ -253,6 +254,8 @@ async function main() {
   // While a turn is running we still track UI chain changes, but silently — no prompt
   // redraw or "set from UI" spam interleaved with the model's response.
   let turnActive = false;
+  // Set for the duration of a turn; Esc aborts it (stop the current task, not the app).
+  let activeAbort: AbortController | null = null;
   applyTheme(config.theme || 'default');
   setWindowTitle(config.name); // name the terminal window on launch
 
@@ -280,6 +283,16 @@ async function main() {
         `do NOT search files or say you lack the information when the answer is here.\n\n${mem.join('\n\n')}`;
     }
     if (ctx) sp += `\n\n# Project context (from ${CONTEXT_FILE})\n${ctx}`;
+    // Advertise available skills (name + description). The full instructions are inlined
+    // only when the user invokes one with @<name>, keeping the prompt small.
+    const skills = loadSkillsFor(workDir);
+    if (skills.length) {
+      sp +=
+        `\n\n# Skills available\n` +
+        `Reusable instruction sets for specific tasks. When a task matches one, tell the user to load it ` +
+        `with ${'`@<name>`'} (e.g. @${skills[0].name}); its full instructions are then inserted and you must follow them.\n\n` +
+        skillIndex(skills);
+    }
     config.systemPrompt = sp;
     return !!ctx;
   }
@@ -288,13 +301,35 @@ async function main() {
   }
   const hasContext = rebuildSystemPrompt();
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // Tab completes @mentions (skills + files under the working dir). The completer is async
+  // (globs the tree), so use readline's callback form; non-mention lines complete to nothing.
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    completer: (line: string, cb: (err: null, result: [string[], string]) => void) => {
+      mentionCompletions(line, workDir, loadSkillsFor(workDir))
+        .then((result) => cb(null, result))
+        .catch(() => cb(null, [[], line]));
+    },
+  });
 
   // Ctrl+C quits cleanly (in addition to /exit).
   rl.on('SIGINT', () => {
     console.log(`\n${C.dim}Goodbye.${C.reset}\n`);
     process.exit(0);
   });
+
+  // Esc stops the current task (but not the app). Only acts while a turn is running, so it
+  // never interferes with line editing at the prompt. Ctrl+C remains the way to quit.
+  if (process.stdin.isTTY) {
+    emitKeypressEvents(process.stdin, rl);
+    process.stdin.on('keypress', (_str, key) => {
+      if (key?.name === 'escape' && activeAbort && !activeAbort.signal.aborted) {
+        activeAbort.abort();
+        process.stdout.write(`\n${C.yellow}  stopping…${C.reset}\n`);
+      }
+    });
+  }
 
   // Wire the shell approval gate to an interactive y/n prompt.
   setShellApproval(async (command) => {
@@ -499,7 +534,10 @@ async function main() {
           `  ${C.cyan}/memory${C.reset}        show project memory (${C.reset}${C.cyan}/memory save${C.reset}${C.dim} to update now, ${C.reset}${C.cyan}/memory clear${C.reset}${C.dim} to wipe)${C.reset}\n` +
           `  ${C.cyan}/autocommit${C.reset}    auto-commit file changes to git (currently ${autoCommit ? 'on' : 'off'}; ${C.reset}${C.cyan}/autocommit on|off${C.reset})\n` +
           `  ${C.cyan}/clear${C.reset}         clear the conversation context (alias: ${C.reset}${C.cyan}/new${C.reset})\n` +
-          `  ${C.cyan}@<name>${C.reset}        attach files by fuzzy name (e.g. ${C.reset}${C.cyan}@prd${C.reset}${C.dim}) — inlined for the model to read${C.reset}\n` +
+          `  ${C.cyan}@<name>${C.reset}        load a skill, or attach files by fuzzy name (e.g. ${C.reset}${C.cyan}@prd${C.reset}${C.dim}) — inlined for the model${C.reset}\n` +
+          `  ${C.cyan}/skills${C.reset}        list available skills (from ${C.reset}${C.cyan}.skills/${C.reset}${C.dim})${C.reset}\n` +
+          `  ${C.cyan}/dir${C.reset} ${C.dim}[path]${C.reset}    list files in the working dir (alias: ${C.reset}${C.cyan}/ls${C.reset}${C.dim})${C.reset}\n` +
+          `  ${C.cyan}Esc${C.reset}            stop the current task (Ctrl+C quits the app)\n` +
           `  ${C.cyan}/help${C.reset}          show this help\n` +
           `  ${C.cyan}/exit${C.reset}          quit\n` +
           `\n  ${C.dim}To change models: open the web UI (start.bat), Coder tab.${C.reset}\n`,
@@ -638,6 +676,41 @@ async function main() {
       }
       continue;
     }
+    if (input === '/dir' || input === '/ls' || input.startsWith('/dir ') || input.startsWith('/ls ')) {
+      const arg = input.replace(/^\/(dir|ls)\s*/, '').trim();
+      const target = arg ? resolve(workDir, arg) : workDir;
+      try {
+        const entries = readdirSync(target, { withFileTypes: true });
+        const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+        const files = entries.filter((e) => !e.isDirectory()).map((e) => e.name).sort();
+        console.log(`\n  ${C.dim}${target}${C.reset}`);
+        for (const d of dirs) console.log(`  ${C.cyan}${d}/${C.reset}`);
+        for (const f of files) console.log(`  ${f}`);
+        console.log(
+          `  ${C.dim}${dirs.length} dir${dirs.length === 1 ? '' : 's'}, ${files.length} file${files.length === 1 ? '' : 's'}${C.reset}\n`,
+        );
+      } catch (e: any) {
+        console.log(`  ${C.yellow}${e.message}${C.reset}\n`);
+      }
+      continue;
+    }
+    if (input === '/skills') {
+      const skills = loadSkillsFor(workDir);
+      if (!skills.length) {
+        console.log(
+          `  ${C.dim}No skills yet. Add one at ${C.reset}${C.cyan}.skills/<name>/SKILL.md${C.reset}${C.dim} ` +
+            `(a SkillOpt best_skill.md works too). Load one in a message with ${C.reset}${C.cyan}@<name>${C.reset}${C.dim}.${C.reset}\n`,
+        );
+      } else {
+        console.log(`\n  ${C.bold}Skills${C.reset} ${C.dim}(load in a message with @<name>)${C.reset}`);
+        skills.forEach((s) => {
+          const tag = s.source === 'project' ? `${C.green}[project]${C.reset}` : `${C.gray}[global]${C.reset}`;
+          console.log(`  ${C.cyan}@${s.name}${C.reset} ${tag}  ${C.dim}${s.description || '(no description)'}${C.reset}`);
+        });
+        console.log();
+      }
+      continue;
+    }
     if (input === '/active') {
       if (!chain.length) {
         console.log(`  ${C.yellow}no coder model configured - add one in the web UI${C.reset}\n`);
@@ -715,15 +788,20 @@ async function main() {
     if (isInit) {
       console.log(`\n${C.dim}Analyzing project and writing ${CONTEXT_FILE}...${C.reset}`);
     } else {
-      const { text: expanded, matched, unmatched, truncated } = await resolveMentions(input, workDir);
+      const { text: expanded, skills, matched, unmatched, truncated } = await resolveMentions(
+        input,
+        workDir,
+        loadSkillsFor(workDir),
+      );
       turnContent = expanded;
+      for (const s of skills) console.log(`  ${C.magenta}[skill loaded: ${s}]${C.reset}`);
       if (matched.length) {
         const files = matched.flatMap((m) => m.files);
         console.log(
           `  ${C.dim}@mention -> attached ${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}${truncated ? ' (truncated to fit context)' : ''}${C.reset}`,
         );
       }
-      for (const t of unmatched) console.log(`  ${C.yellow}no file matched @${t}${C.reset}`);
+      for (const t of unmatched) console.log(`  ${C.yellow}no skill or file matched @${t}${C.reset}`);
       messages.push({ role: 'user', content: expanded });
       await ensureSession();
       await log('user', expanded);
@@ -736,9 +814,12 @@ async function main() {
     const mutated = new Set<string>();
 
     turnActive = true; // suppress live "set from UI" chain announcements during the turn
+    activeAbort = new AbortController(); // Esc aborts this turn
+    console.log(`  ${C.dim}(Esc to stop)${C.reset}`);
     try {
       const agentInput = isInit ? turnContent : messages.length > 1 ? messages : turnContent;
       const result = await runAgentChain(config, activeChain, agentInput, {
+        signal: activeAbort.signal,
         onEvent: (e) => {
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
           renderer.handle(e);
@@ -783,9 +864,20 @@ async function main() {
       );
     } catch (err: any) {
       renderer.done();
-      console.log(`\n${C.yellow}  All coder models failed: ${err.message}${C.reset}\n`);
+      if (isAbortError(err, activeAbort?.signal)) {
+        // User pressed Esc. Keep the user message in history (they can retry/continue),
+        // but record a short assistant marker so the transcript stays coherent.
+        console.log(`\n${C.yellow}  ⓧ stopped${C.reset}\n`);
+        if (!isInit) {
+          messages.push({ role: 'assistant', content: '[stopped by user]' });
+          await log('assistant', '[stopped by user]');
+        }
+      } else {
+        console.log(`\n${C.yellow}  All coder models failed: ${err.message}${C.reset}\n`);
+      }
     } finally {
       turnActive = false;
+      activeAbort = null;
     }
   }
 

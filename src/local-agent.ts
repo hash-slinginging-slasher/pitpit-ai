@@ -249,7 +249,13 @@ export async function runOpenAICompatibleAgent(
   let finalText = '';
 
   for (let step = 0; step < config.maxSteps; step++) {
-    if (options?.signal?.aborted) break;
+    // Esc between steps: throw so it stops like a cancel (not a silent empty result). A
+    // mid-stream abort already rejects the fetch with AbortError, which propagates here.
+    if (options?.signal?.aborted) {
+      const e: any = new Error('Aborted by user');
+      e.name = 'AbortError';
+      throw e;
+    }
     const turn = await streamTurn(baseUrl, wireModel, messages, specs, options?.onEvent, options?.signal, auth);
     usage.inputTokens += turn.usage?.prompt_tokens ?? 0;
     usage.outputTokens += turn.usage?.completion_tokens ?? 0;

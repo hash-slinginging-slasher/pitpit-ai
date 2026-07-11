@@ -32,6 +32,11 @@ export interface RunOptions {
   instructions?: string;
 }
 
+/** True if an error is (or an aborted signal implies) a user cancellation, not a real failure. */
+export function isAbortError(err: any, signal?: AbortSignal): boolean {
+  return !!signal?.aborted || err?.name === 'AbortError' || err?.code === 'ABORT_ERR';
+}
+
 export async function runAgent(
   config: AgentConfig,
   model: string,
@@ -122,6 +127,15 @@ export async function runAgent(
     }
   }
 
+  // If the user hit Esc mid-stream, stop here — don't wait on getResponse() and don't
+  // let this surface as a model failure (the chain must not fail over on a cancel).
+  if (options?.signal?.aborted) {
+    void result.getResponse().catch(() => {}); // swallow the abandoned stream's rejection
+    const e: any = new Error('Aborted by user');
+    e.name = 'AbortError';
+    throw e;
+  }
+
   const response = await result.getResponse();
   // Some models leave response.outputText empty even though they streamed text via
   // message items — reconstruct the assistant text from the output in that case.
@@ -186,6 +200,8 @@ export async function runAgentChain(
       return { ...result, model: models[i], failedOver: i > 0 };
     } catch (err: any) {
       lastErr = err;
+      // Esc / cancel: stop the whole chain immediately — do not fall through to a backup model.
+      if (isAbortError(err, options?.signal)) throw err;
       if (i < models.length - 1) {
         options?.onFailover?.({
           from: models[i],
