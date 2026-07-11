@@ -1,0 +1,95 @@
+// Electron main process for the Coder desktop app.
+// Launched by `coder` (see bin/coder.mjs), which passes CODER_CWD (the folder the
+// agent should edit) and CODER_PORT (a free port) via the environment. This process
+// starts the existing web server as a child, then opens a window at /chat.
+const { app, BrowserWindow, shell } = require('electron');
+const { spawn } = require('child_process');
+const path = require('path');
+const net = require('net');
+
+const appDir = path.dirname(__dirname); // electron/ -> project root
+const PORT = Number(process.env.CODER_PORT) || 7000;
+const AGENT_CWD = process.env.CODER_CWD || process.cwd(); // the project the agent edits
+
+let serverProc = null;
+
+/** Resolve once the port accepts connections, or reject after a timeout. */
+function waitForPort(port, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const tryOnce = () => {
+      const s = net.connect(port, '127.0.0.1');
+      s.on('connect', () => { s.destroy(); resolve(); });
+      s.on('error', () => {
+        if (Date.now() - start > timeoutMs) reject(new Error('server did not start in time'));
+        else setTimeout(tryOnce, 200);
+      });
+    };
+    tryOnce();
+  });
+}
+
+/** Start the web server (tsx) as a plain-Node child, editing AGENT_CWD. */
+async function startServer() {
+  const tsx = path.join(appDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  const server = path.join(appDir, 'web', 'server.ts');
+  // Run the server under SYSTEM node (passed as CODER_NODE by bin/coder.mjs), not
+  // Electron's node: the terminal uses node-pty, a native module built for the system
+  // node ABI. Fall back to Electron-as-node if CODER_NODE is unset.
+  const nodeExe = process.env.CODER_NODE || process.execPath;
+  const env = { ...process.env, PORT: String(PORT) };
+  if (!process.env.CODER_NODE) env.ELECTRON_RUN_AS_NODE = '1';
+  serverProc = spawn(nodeExe, [tsx, server], { cwd: AGENT_CWD, env, stdio: 'ignore' });
+  serverProc.on('exit', () => { serverProc = null; });
+  await waitForPort(PORT);
+}
+
+async function createWindow() {
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 820,
+    minWidth: 720,
+    minHeight: 480,
+    backgroundColor: '#1a1a1a',
+    title: 'Coder',
+    icon: path.join(appDir, 'assets', 'icon.png'),
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+
+  // Open external links (http/https not to our server) in the system browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (!url.startsWith(`http://localhost:${PORT}`)) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  await win.loadURL(`http://localhost:${PORT}/chat`);
+}
+
+app.whenReady().then(async () => {
+  if (process.platform === 'win32') app.setAppUserModelId('com.pitpit.coder');
+  try {
+    await startServer();
+  } catch (e) {
+    // Surface a minimal error page instead of a blank window.
+    const win = new BrowserWindow({ width: 700, height: 300, backgroundColor: '#1a1a1a', title: 'Coder' });
+    win.loadURL('data:text/html,' + encodeURIComponent(`<body style="background:#1a1a1a;color:#e8e8e8;font-family:sans-serif;padding:30px"><h2>Could not start the Coder server</h2><pre>${e.message}</pre></body>`));
+    return;
+  }
+  await createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (serverProc) { try { serverProc.kill(); } catch { /* ignore */ } }
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('quit', () => {
+  if (serverProc) { try { serverProc.kill(); } catch { /* ignore */ } }
+});
