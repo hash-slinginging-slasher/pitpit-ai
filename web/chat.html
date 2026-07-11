@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Coder</title>
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <style>
+      :root {
+        --bg: #1a1a1a; --panel: #202020; --panel2: #262626; --border: #333;
+        --text: #e8e8e8; --dim: #9a9a9a; --muted: #6a6a6a;
+        --accent: #c1447e; --accent2: #4a9eff; --good: #43b581; --warn: #e0a030;
+        --user: #2a2f3a; --code: #161616;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; }
+
+      /* Top tab bar */
+      .tabbar { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
+      .brand { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; margin-right: 10px; }
+      .brand .dot { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
+      .tabbtn { background: none; border: 1px solid transparent; color: var(--dim); padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+      .tabbtn:hover { color: var(--text); }
+      .tabbtn.active { background: var(--panel2); color: var(--text); border-color: var(--border); }
+      .tabbar .spacer { flex: 1; }
+      .tabbar a.settings { color: var(--dim); text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 8px; }
+      .tabbar a.settings:hover { background: var(--panel2); color: var(--text); }
+
+      .views { flex: 1; min-height: 0; }
+      .view { display: flex; height: 100%; min-height: 0; }
+      .view.hidden { display: none; }
+
+      /* Sidebar (shared look) */
+      .sidebar { width: 250px; flex: 0 0 250px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 12px; min-height: 0; }
+      .newbtn { width: 100%; text-align: left; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; font-size: 14px; margin-bottom: 12px; }
+      .newbtn:hover { border-color: var(--accent); }
+      .list-title { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 4px 8px; }
+      .scroll { overflow-y: auto; flex: 1; }
+      .item { padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--dim); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .item:hover { background: var(--panel2); color: var(--text); }
+      .item.active { background: var(--panel2); color: var(--text); }
+      .item .sub { color: var(--muted); font-size: 11px; }
+
+      /* Chat main */
+      .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      .topbar { padding: 10px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--dim); }
+      .topbar .model { color: var(--accent); font-weight: 600; }
+      .chain { color: var(--muted); }
+      .messages { flex: 1; overflow-y: auto; padding: 24px 0; }
+      .wrap { max-width: 780px; margin: 0 auto; padding: 0 20px; }
+      .empty { color: var(--muted); text-align: center; margin-top: 14vh; }
+      .empty h1 { color: var(--text); font-weight: 600; font-size: 22px; }
+      .msg { margin: 0 0 18px; }
+      .msg .role { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 4px; }
+      .msg.user .bubble { background: var(--user); border-radius: 10px; padding: 10px 14px; }
+      .msg.assistant .bubble { padding: 2px 0; }
+      .bubble { white-space: pre-wrap; word-wrap: break-word; }
+      .bubble pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; white-space: pre; }
+      .bubble code { background: var(--code); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+      .bubble pre code { background: none; padding: 0; }
+      .events { margin: 4px 0; }
+      .evt { font-size: 12px; color: var(--muted); padding: 2px 0; font-family: ui-monospace, Consolas, monospace; }
+      .evt .tool { color: var(--accent2); }
+      .evt.failover { color: var(--warn); }
+      .chip { display: inline-block; font-size: 12px; color: var(--dim); background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 2px 10px; margin: 2px 4px 2px 0; }
+      .thinking { color: var(--muted); font-style: italic; }
+      .usage { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+      /* Composer */
+      .composer { border-top: 1px solid var(--border); padding: 14px 20px 18px; }
+      .composer .inner { max-width: 780px; margin: 0 auto; }
+      .inputrow { display: flex; gap: 8px; align-items: flex-end; background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; }
+      .inputrow:focus-within { border-color: var(--accent); }
+      textarea { flex: 1; background: none; border: none; color: var(--text); resize: none; outline: none; font: 14px/1.5 inherit; max-height: 180px; min-height: 24px; }
+      .sendbtn, .stopbtn { border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 600; }
+      .sendbtn { background: var(--accent); color: #fff; }
+      .stopbtn { background: #3a2a2a; color: var(--warn); border: 1px solid var(--warn); }
+      .hint { color: var(--muted); font-size: 11px; margin-top: 6px; text-align: center; }
+
+      /* Projects / terminal */
+      .pfolder { display: flex; gap: 6px; margin-bottom: 10px; }
+      .pfolder input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 7px 9px; font-size: 12px; }
+      .pfolder button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 12px; }
+      .termhost { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--code); }
+      .termbar { padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 10px; }
+      .termbar .cwd { color: var(--accent); font-family: ui-monospace, Consolas, monospace; }
+      .termbar button { margin-left: auto; background: var(--panel2); color: var(--dim); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+      .termbar button:hover { color: var(--text); border-color: var(--accent); }
+      #term { flex: 1; min-height: 0; padding: 6px 8px; }
+      .term-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
+    </style>
+  </head>
+  <body>
+    <div class="tabbar">
+      <div class="brand"><span class="dot"></span> Coder</div>
+      <button class="tabbtn active" data-tab="chat">Chat</button>
+      <button class="tabbtn" data-tab="projects">Projects</button>
+      <span class="spacer"></span>
+      <a class="settings" href="/" title="Models &amp; settings">⚙ Models &amp; settings</a>
+    </div>
+
+    <div class="views">
+      <!-- CHAT -->
+      <div class="view" id="view-chat">
+        <aside class="sidebar">
+          <button class="newbtn" id="newBtn">+ New session</button>
+          <div class="list-title">Recents</div>
+          <div class="scroll" id="recents"></div>
+        </aside>
+        <main class="main">
+          <div class="topbar"><span>Model:</span> <span class="model" id="model">…</span> <span class="chain" id="chain"></span></div>
+          <div class="messages" id="messages">
+            <div class="empty" id="empty"><h1>What's up next?</h1><p>Describe a task or ask a question.</p></div>
+          </div>
+          <div class="composer">
+            <div class="inner">
+              <div class="inputrow">
+                <textarea id="input" rows="1" placeholder="Describe a task or ask a question  (Enter to send, Shift+Enter for newline)"></textarea>
+                <button class="sendbtn" id="send">Send</button>
+              </div>
+              <div class="hint">Type <b>@name</b> to attach a file or load a skill. Esc/Stop cancels a run.</div>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      <!-- PROJECTS -->
+      <div class="view hidden" id="view-projects">
+        <aside class="sidebar">
+          <div class="list-title">Open a folder</div>
+          <div class="pfolder">
+            <input id="folderInput" placeholder="path to a project…" spellcheck="false" />
+            <button id="folderOpen">Open</button>
+          </div>
+          <div class="list-title">Projects</div>
+          <div class="scroll" id="projects"></div>
+        </aside>
+        <div class="termhost">
+          <div class="termbar">
+            <span>Terminal:</span> <span class="cwd" id="termCwd">—</span>
+            <button id="termRestart" style="display:none">restart</button>
+          </div>
+          <div class="term-empty" id="termEmpty">Pick a project (or open a folder) to launch the coder CLI here.</div>
+          <div id="term" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="/vendor/xterm.js"></script>
+    <script src="/vendor/addon-fit.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const messagesEl = $("messages");
+      let history = [], sessionId = null, running = false, aborter = null;
+
+      // ---------- tabs ----------
+      function showTab(name) {
+        document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+        $("view-" + name).classList.remove("hidden");
+        document.querySelectorAll(".tabbtn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+        if (name === "projects") loadProjects();
+        if (name === "projects" && curTerm) setTimeout(fitTerm, 60);
+      }
+      document.querySelectorAll(".tabbtn").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+
+      // ---------- tiny markdown ----------
+      function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+      function mdToHtml(src) {
+        const parts = src.split(/```/); let out = "";
+        for (let i = 0; i < parts.length; i++) {
+          if (i % 2 === 1) out += "<pre><code>" + esc(parts[i].replace(/^[a-zA-Z0-9]*\n/, "")) + "</code></pre>";
+          else { let t = esc(parts[i]); t = t.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>"); out += t; }
+        }
+        return out;
+      }
+      function clearEmpty() { const e = $("empty"); if (e) e.remove(); }
+      function scrollDown() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+      function addMessage(role, html) {
+        clearEmpty();
+        const div = document.createElement("div");
+        div.className = "msg " + role;
+        div.innerHTML = `<div class="role">${role}</div><div class="wrap"><div class="bubble"></div><div class="events"></div><div class="usage"></div></div>`;
+        div.querySelector(".bubble").innerHTML = html || "";
+        messagesEl.appendChild(div); scrollDown(); return div;
+      }
+
+      // ---------- recents / sessions ----------
+      async function loadRecents() {
+        try {
+          const pj = await (await fetch("/api/projects")).json();
+          let sessions = [];
+          for (const p of (pj.projects || []).slice(0, 5)) {
+            const r = await (await fetch(`/api/projects/${p.id}/sessions`)).json();
+            sessions = sessions.concat((r.sessions || []).map((s) => ({ ...s, project: p.name })));
+          }
+          sessions.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+          const el = $("recents"); el.innerHTML = "";
+          for (const s of sessions.slice(0, 25)) {
+            const d = document.createElement("div");
+            d.className = "item" + (s.id === sessionId ? " active" : "");
+            d.textContent = s.title || "(untitled)"; d.title = `${s.project} · ${s.messages} msgs`;
+            d.onclick = () => openSession(s.id); el.appendChild(d);
+          }
+          if (!sessions.length) el.innerHTML = `<div class="item" style="cursor:default">No saved sessions${(pj.projects||[]).length ? "" : " (no database configured)"}.</div>`;
+        } catch (e) {}
+      }
+      async function openSession(id) {
+        try {
+          const data = await (await fetch(`/api/sessions/${id}`)).json();
+          if (!data.session) return;
+          sessionId = id; history = (data.messages || []).map((m) => ({ role: m.role, content: m.content }));
+          messagesEl.innerHTML = ""; for (const m of history) addMessage(m.role, mdToHtml(m.content)); loadRecents();
+        } catch (e) {}
+      }
+      function newSession() {
+        sessionId = null; history = [];
+        messagesEl.innerHTML = `<div class="empty" id="empty"><h1>What's up next?</h1><p>Describe a task or ask a question.</p></div>`;
+        loadRecents(); $("input").focus();
+      }
+
+      // ---------- model indicator ----------
+      const short = (m) => (m || "").split("/").pop().replace(/:free$/, " (free)");
+      async function loadModel() {
+        try {
+          const a = await (await fetch("/api/agents")).json();
+          const chain = a.agents?.coder || [];
+          $("model").textContent = chain[0] ? short(chain[0]) : "none configured";
+          $("chain").textContent = chain.length > 1 ? `+${chain.length - 1} failover` : "";
+        } catch (e) { $("model").textContent = "?"; }
+      }
+
+      // ---------- chat send / stream ----------
+      function setRunning(on) {
+        running = on;
+        $("send").outerHTML = on ? `<button class="stopbtn" id="send">Stop</button>` : `<button class="sendbtn" id="send">Send</button>`;
+        $("send").onclick = on ? stop : send;
+      }
+      function stop() { if (aborter) aborter.abort(); }
+      async function send() {
+        const input = $("input"); const message = input.value.trim();
+        if (!message || running) return;
+        input.value = ""; input.style.height = "auto";
+        addMessage("user", mdToHtml(message));
+        const asst = addMessage("assistant", '<span class="thinking">…</span>');
+        const ctx = { bubble: asst.querySelector(".bubble"), events: asst.querySelector(".events"), usageEl: asst.querySelector(".usage"), _t: "", setText(t){this._t=t;}, getText(){return this._t;} };
+        aborter = new AbortController(); setRunning(true);
+        try {
+          const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history, sessionId }), signal: aborter.signal });
+          const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read(); if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const chunks = buf.split("\n\n"); buf = chunks.pop();
+            for (const c of chunks) {
+              const line = c.replace(/^data: /, "").trim(); if (!line) continue;
+              let e; try { e = JSON.parse(line); } catch { continue; }
+              handleEvent(e, ctx);
+            }
+          }
+        } catch (err) {
+          if (err.name !== "AbortError") ctx.events.innerHTML += `<div class="evt failover">error: ${esc(err.message)}</div>`;
+        } finally {
+          const text = ctx.getText();
+          if (text) { ctx.bubble.innerHTML = mdToHtml(text); history.push({ role: "user", content: message }); history.push({ role: "assistant", content: text }); }
+          else if (ctx.bubble.querySelector(".thinking")) ctx.bubble.innerHTML = '<span class="evt">(no output)</span>';
+          setRunning(false); aborter = null; scrollDown();
+        }
+      }
+      function handleEvent(e, ctx) {
+        const { bubble, events, usageEl } = ctx;
+        switch (e.type) {
+          case "text": { const t = ctx.getText() + (e.delta || ""); ctx.setText(t); bubble.innerHTML = mdToHtml(t); scrollDown(); break; }
+          case "reasoning": break;
+          case "tool_call": events.innerHTML += `<div class="evt"><span class="tool">▸ ${esc(e.name)}</span> ${esc(JSON.stringify(e.args || {}).slice(0, 120))}</div>`; scrollDown(); break;
+          case "tool_result": events.innerHTML += `<div class="evt">&nbsp;&nbsp;→ ${esc((e.output || "").slice(0, 160))}</div>`; break;
+          case "failover": events.innerHTML += `<div class="evt failover">! failing over → ${esc(e.to)} (${esc(e.error || "")})</div>`; break;
+          case "skills": bubble.insertAdjacentHTML("beforebegin", e.skills.map((s) => `<span class="chip">skill: ${esc(s)}</span>`).join("")); break;
+          case "files": bubble.insertAdjacentHTML("beforebegin", e.files.map((f) => `<span class="chip">📎 ${esc(f)}</span>`).join("")); break;
+          case "session": sessionId = e.sessionId; loadRecents(); break;
+          case "done": { const u = e.usage || {}; const via = e.failedOver ? `via ${short(e.model)} · ` : ""; usageEl.textContent = `${via}${u.inputTokens ?? 0} in · ${u.outputTokens ?? 0} out`; if (e.sessionId) sessionId = e.sessionId; break; }
+          case "stopped": events.innerHTML += `<div class="evt failover">stopped</div>`; break;
+          case "error": events.innerHTML += `<div class="evt failover">error: ${esc(e.message)}</div>`; break;
+        }
+      }
+
+      // ---------- Projects tab + terminal ----------
+      let curTerm = null, curFit = null, curWs = null, curCwd = null, projectsLoaded = false;
+      async function loadProjects() {
+        try {
+          const [pj, cw] = await Promise.all([
+            (await fetch("/api/projects")).json(),
+            (await fetch("/api/cwd")).json(),
+          ]);
+          if (cw.cwd && !$("folderInput").value) $("folderInput").value = cw.cwd;
+          const el = $("projects"); el.innerHTML = "";
+          // current server dir first
+          if (cw.cwd) {
+            const d = document.createElement("div");
+            d.className = "item"; d.innerHTML = `${esc(cw.name)} <span class="sub">${esc(cw.cwd)}</span>`;
+            d.onclick = () => openTerminal(cw.cwd); el.appendChild(d);
+          }
+          for (const p of pj.projects || []) {
+            if (p.path === cw.cwd) continue;
+            const d = document.createElement("div");
+            d.className = "item"; d.innerHTML = `${esc(p.name)} <span class="sub">${esc(p.path || "")}</span>`;
+            d.onclick = () => openTerminal(p.path); el.appendChild(d);
+          }
+          if (!el.children.length) el.innerHTML = `<div class="item" style="cursor:default">No projects yet.</div>`;
+          projectsLoaded = true;
+        } catch (e) {}
+      }
+      function fitTerm() { try { curFit && curFit.fit(); if (curWs && curWs.readyState === 1) curWs.send(JSON.stringify({ t: "resize", cols: curTerm.cols, rows: curTerm.rows })); } catch (e) {} }
+      function openTerminal(cwd) {
+        if (!cwd) return;
+        curCwd = cwd; $("termCwd").textContent = cwd; $("termRestart").style.display = "";
+        $("termEmpty").style.display = "none"; $("term").style.display = "block";
+        // tear down any existing
+        if (curWs) { try { curWs.close(); } catch (e) {} }
+        if (curTerm) { try { curTerm.dispose(); } catch (e) {} }
+        $("term").innerHTML = "";
+        const FitCtor = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
+        curTerm = new window.Terminal({ fontSize: 13, fontFamily: "Consolas, ui-monospace, monospace", cursorBlink: true, theme: { background: "#161616", foreground: "#e8e8e8" } });
+        curFit = new FitCtor();
+        curTerm.loadAddon(curFit);
+        curTerm.open($("term"));
+        curFit.fit();
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        const ws = new WebSocket(`${proto}://${location.host}/ws/term?cwd=${encodeURIComponent(cwd)}`);
+        curWs = ws;
+        ws.onmessage = (ev) => curTerm.write(typeof ev.data === "string" ? ev.data : new Uint8Array(ev.data));
+        ws.onopen = () => setTimeout(fitTerm, 80);
+        ws.onclose = () => curTerm && curTerm.write("\r\n\x1b[90m[session ended]\x1b[0m\r\n");
+        curTerm.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: "in", d })); });
+        // highlight the active project item
+        document.querySelectorAll("#projects .item").forEach((it) => it.classList.toggle("active", it.querySelector(".sub") && it.querySelector(".sub").textContent === cwd));
+      }
+      $("folderOpen").onclick = () => openTerminal($("folderInput").value.trim());
+      $("folderInput").addEventListener("keydown", (e) => { if (e.key === "Enter") openTerminal($("folderInput").value.trim()); });
+      $("termRestart").onclick = () => curCwd && openTerminal(curCwd);
+      window.addEventListener("resize", () => { if (curTerm) fitTerm(); });
+
+      // ---------- input UX ----------
+      const input = $("input");
+      input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 180) + "px"; });
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(); }
+        if (ev.key === "Escape" && running) { ev.preventDefault(); stop(); }
+      });
+      $("newBtn").onclick = newSession;
+      $("send").onclick = send;
+
+      loadModel(); loadRecents(); input.focus();
+    </script>
+  </body>
+</html>

@@ -1,9 +1,14 @@
 import { createServer } from 'http';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { resolve, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, AGENT_KINDS, type AgentKind } from '../src/config.js';
-import { testConnection, listProjects, listSessions, getSessionWithMessages } from '../src/db.js';
+import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
+import { runAgentChain, isAbortError, type ChatMessage } from '../src/agent.js';
+import { loadSkillsFor, skillIndex } from '../src/skills.js';
+import { resolveMentions } from '../src/mentions.js';
+import { WebSocketServer } from 'ws';
+import * as pty from 'node-pty';
 import { cliStatuses, cliInstall, cliLoginCmd, cliLogoutCmd, deleteCredFiles, CLI_NAMES, type CliName } from '../src/providers/credentials.js';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
@@ -33,6 +38,7 @@ function openInTerminal(command: string): void {
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const appRoot = resolve(__dirname, '..'); // project root (one level up from web/)
 const PORT = Number(process.env.PORT) || 7000;
 
 // Read the key live on each request so a key saved in Settings works immediately.
@@ -128,6 +134,44 @@ async function fetchGithubModels() {
       outputModalities: m.supported_output_modalities ?? [],
     });
   });
+}
+
+/** Read the project's AGENTS.md (if any) from the working dir — same context the CLI loads. */
+function readAgentsContext(cwd: string): string {
+  const p = resolve(cwd, 'AGENTS.md');
+  try {
+    if (existsSync(p)) return readFileSync(p, 'utf-8').slice(0, 12000);
+  } catch {
+    /* ignore */
+  }
+  return '';
+}
+
+/**
+ * Build the chat system prompt for the web app: base prompt + available skills +
+ * AGENTS.md project context. Mirrors what the CLI assembles (minus DB project memory,
+ * added later), so the GUI agent behaves like the terminal one.
+ */
+function buildChatSystemPrompt(cwd: string): string {
+  const base = loadConfig({}, { skipApiKey: true }).systemPrompt;
+  let sp = base;
+  const skills = loadSkillsFor(cwd);
+  if (skills.length) {
+    sp +=
+      `\n\n# Skills available\n` +
+      `Reusable instruction sets. When the user references one by name, follow its instructions.\n\n` +
+      skillIndex(skills);
+  }
+  const ctx = readAgentsContext(cwd);
+  if (ctx) sp += `\n\n# Project context (from AGENTS.md)\n${ctx}`;
+  return sp;
+}
+
+/** Read a request's JSON body. */
+async function readBody(req: import('http').IncomingMessage): Promise<any> {
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  return body ? JSON.parse(body) : {};
 }
 
 const server = createServer(async (req, res) => {
@@ -326,6 +370,12 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // The server's working directory (the folder the GUI agent edits by default).
+    if (req.method === 'GET' && url.pathname === '/api/cwd') {
+      json(res, 200, { cwd: process.cwd(), name: basename(process.cwd()) || process.cwd() });
+      return;
+    }
+
     // Projects registry + session history.
     if (req.method === 'GET' && url.pathname === '/api/projects') {
       try {
@@ -352,10 +402,150 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/chat') {
+      const html = readFileSync(resolve(__dirname, 'chat.html'), 'utf-8');
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(html);
+      return;
+    }
+
+    // xterm.js assets (served from node_modules for the Projects-tab terminal).
+    if (req.method === 'GET' && url.pathname.startsWith('/vendor/')) {
+      const VENDOR: Record<string, [string, string]> = {
+        '/vendor/xterm.js': ['node_modules/@xterm/xterm/lib/xterm.js', 'application/javascript'],
+        '/vendor/xterm.css': ['node_modules/@xterm/xterm/css/xterm.css', 'text/css'],
+        '/vendor/addon-fit.js': ['node_modules/@xterm/addon-fit/lib/addon-fit.js', 'application/javascript'],
+      };
+      const entry = VENDOR[url.pathname];
+      if (entry) {
+        res.writeHead(200, { 'Content-Type': entry[1] });
+        res.end(readFileSync(resolve(appRoot, entry[0])));
+        return;
+      }
+    }
+
+    // Streaming chat: run the coder chain and stream AgentEvents to the browser over SSE.
+    // Body: { message, history?: ChatMessage[], sessionId?: number }. The client keeps the
+    // conversation and sends it back each turn; the server persists to the DB if configured.
+    if (req.method === 'POST' && url.pathname === '/api/chat') {
+      const body = await readBody(req);
+      const message: string = (body.message ?? '').toString();
+      const history: ChatMessage[] = Array.isArray(body.history) ? body.history : [];
+      let sessionId: number | null = body.sessionId ?? null;
+      if (!message.trim()) {
+        json(res, 400, { error: 'empty message' });
+        return;
+      }
+      const chain = readAgents().coder;
+      if (!chain.length) {
+        json(res, 400, { error: 'No coder model configured. Add one on the Code tab.' });
+        return;
+      }
+
+      const cwd = process.cwd();
+      // SSE headers. Each event is one `data: {json}\n\n` line.
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+      // Client stop / disconnect aborts the run (this is the GUI's Esc).
+      const ac = new AbortController();
+      req.on('close', () => ac.abort());
+
+      try {
+        // Only demand the OpenRouter key if the chain actually contains an OpenRouter model.
+        const needsKey = chain.some((m) => providerOf(m) === 'openrouter');
+        const config = loadConfig({}, { skipApiKey: !needsKey });
+        config.systemPrompt = buildChatSystemPrompt(cwd);
+
+        // Expand @mentions (skills + files) exactly like the CLI.
+        const resolved = await resolveMentions(message, cwd, loadSkillsFor(cwd));
+        if (resolved.skills.length) send({ type: 'skills', skills: resolved.skills });
+        if (resolved.matched.length) send({ type: 'files', files: resolved.matched.flatMap((m) => m.files) });
+
+        // Persist the user turn + ensure a session exists (best-effort; needs a DB).
+        if (dbConfigured()) {
+          try {
+            if (sessionId == null) {
+              const proj = await upsertProject(cwd, basename(cwd) || cwd);
+              sessionId = await createSession(proj.id, chain[0]);
+              await setSessionTitle(sessionId, message.slice(0, 80)).catch(() => {});
+              send({ type: 'session', sessionId });
+            }
+            await addMessage(sessionId, 'user', resolved.text);
+          } catch {
+            /* history disabled for this run */
+          }
+        }
+
+        const fullMessages: ChatMessage[] = [...history, { role: 'user', content: resolved.text }];
+        const result = await runAgentChain(config, chain, fullMessages.length > 1 ? fullMessages : resolved.text, {
+          signal: ac.signal,
+          onEvent: (e) => send(e),
+          onFailover: ({ to, index, error }) => send({ type: 'failover', to, index, error }),
+        });
+
+        if (dbConfigured() && sessionId != null) {
+          await addMessage(sessionId, 'assistant', result.text).catch(() => {});
+        }
+        send({
+          type: 'done',
+          text: result.text,
+          usage: result.usage ?? null,
+          model: result.model,
+          failedOver: result.failedOver,
+          sessionId,
+        });
+      } catch (err: any) {
+        if (isAbortError(err, ac.signal)) send({ type: 'stopped' });
+        else send({ type: 'error', message: err?.message ?? String(err) });
+      } finally {
+        res.end();
+      }
+      return;
+    }
+
     json(res, 404, { error: 'not found' });
   } catch (err: any) {
     json(res, 500, { error: err.message });
   }
+});
+
+// Embedded terminal: a WebSocket per terminal that runs the real coder REPL via a PTY
+// in a client-chosen project directory, so /init, /skills, @mentions etc. all work for
+// real. Localhost-only (same trust boundary as the rest of the server).
+const wss = new WebSocketServer({ server, path: '/ws/term' });
+wss.on('connection', (ws, req) => {
+  const u = new URL(req.url ?? '/', `http://localhost:${PORT}`);
+  const cwd = u.searchParams.get('cwd') || process.cwd();
+  const tsxEntry = resolve(appRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  const cliEntry = resolve(appRoot, 'src', 'cli.ts');
+  let term: import('node-pty').IPty;
+  try {
+    term = pty.spawn(process.execPath, [tsxEntry, cliEntry], {
+      name: 'xterm-256color',
+      cols: 100,
+      rows: 30,
+      cwd,
+      env: { ...process.env, FORCE_COLOR: '1' } as Record<string, string>,
+    });
+  } catch (e: any) {
+    try { ws.send(`\r\n[could not start terminal: ${e.message}]\r\n`); ws.close(); } catch { /* ignore */ }
+    return;
+  }
+  term.onData((d) => { try { ws.send(d); } catch { /* client gone */ } });
+  term.onExit(() => { try { ws.close(); } catch { /* ignore */ } });
+  ws.on('message', (raw) => {
+    let msg: any;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (msg.t === 'in') term.write(msg.d);
+    else if (msg.t === 'resize' && msg.cols && msg.rows) { try { term.resize(msg.cols, msg.rows); } catch { /* ignore */ } }
+  });
+  ws.on('close', () => { try { term.kill(); } catch { /* ignore */ } });
 });
 
 // Bind to localhost only — secrets are readable via /api/settings/reveal, so the
