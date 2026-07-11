@@ -79,6 +79,7 @@ export async function runAgent(
     stopWhen: [stepCountIs(config.maxSteps), maxCost(config.maxCost)],
   });
 
+  let toolSteps = 0; // count tool calls to tell "finished" from "hit the step cap"
   if (options?.onEvent) {
     // Track streamed text length per message item id. A multi-step agent emits
     // multiple message items over one run (one per assistant turn between tool
@@ -103,6 +104,7 @@ export async function runAgent(
       } else if (item.type === 'function_call') {
         callNames.set(item.callId, item.name);
         if (item.status === 'completed') {
+          toolSteps++;
           const args = (() => {
             try {
               return item.arguments ? JSON.parse(item.arguments) : {};
@@ -152,7 +154,15 @@ export async function runAgent(
       .join('\n')
       .trim();
   }
-  return { text, usage: response.usage, output: response.output };
+  // "max_steps" if the tool loop reached the per-leg cap (task likely unfinished);
+  // otherwise the model stopped on its own → "completed". Count from the stream, or
+  // fall back to the returned output items when nothing streamed.
+  const outputSteps = Array.isArray(response.output)
+    ? (response.output as any[]).filter((it) => it?.type === 'function_call').length
+    : 0;
+  const stopReason: 'completed' | 'max_steps' =
+    Math.max(toolSteps, outputSteps) >= config.maxSteps ? 'max_steps' : 'completed';
+  return { text, usage: response.usage, output: response.output, stopReason };
 }
 
 export async function runAgentWithRetry(
@@ -213,4 +223,98 @@ export async function runAgentChain(
     }
   }
   throw lastErr;
+}
+
+// Nudges that keep a long task moving across step-cap boundaries and coder handoffs,
+// instead of restarting from the original prompt (which loses all prior progress).
+const CONTINUE_PROMPT =
+  'You paused after a batch of steps but the task is NOT finished. Continue from where you ' +
+  'left off — the files on disk already reflect your progress so far. Do NOT restart from ' +
+  'scratch; inspect the current state if needed, then keep working until the task is fully done.';
+const HANDOFF_PROMPT =
+  'The previous coder was interrupted before finishing this task. The files on disk reflect its ' +
+  'PARTIAL progress. Do NOT restart from scratch — review the current state of the relevant files, ' +
+  'then complete the remaining work until the task is fully done.';
+
+export interface ResilientOptions extends RunOptions {
+  /** Total continuation legs across the whole run (each leg = up to maxSteps tool calls). */
+  maxRounds?: number;
+  /** How many times to continue the SAME model on a step-cap before handing to the next. */
+  maxContinuesPerModel?: number;
+  onFailover?: (info: { from: string; to: string; index: number; error: string }) => void;
+  onContinue?: (info: { model: string; leg: number; reason: 'step-cap' | 'handoff' }) => void;
+}
+
+/**
+ * Resilient task runner: keeps a task moving to completion across many steps and across
+ * the coder chain. When a coder finishes, returns. When it hits the per-leg step cap but
+ * the task isn't done, it CONTINUES (same coder, then hands off after a few tries). When a
+ * coder errors, it hands off to the next coder — always preserving the running conversation
+ * so the next coder continues from the current state instead of restarting. The local model
+ * at the end of the chain, which never rate-limits, is the reliable anchor that finishes.
+ */
+export async function runResilientChain(
+  config: AgentConfig,
+  models: string[],
+  input: string | ChatMessage[],
+  options?: ResilientOptions,
+) {
+  if (models.length === 0) {
+    throw new Error('No models configured for this agent. Add one in the web UI.');
+  }
+  const messages: ChatMessage[] = typeof input === 'string' ? [{ role: 'user', content: input }] : [...input];
+  const maxRounds = options?.maxRounds ?? 12;
+  const maxContinues = options?.maxContinuesPerModel ?? 4;
+
+  let modelIdx = 0;
+  let legs = 0;
+  let continuesOnThisModel = 0;
+  let last: (Awaited<ReturnType<typeof runAgentWithRetry>> & { model: string }) | null = null;
+  let lastErr: any;
+
+  while (modelIdx < models.length && legs < maxRounds) {
+    if (options?.signal?.aborted) {
+      const e: any = new Error('Aborted by user');
+      e.name = 'AbortError';
+      throw e;
+    }
+    const model = models[modelIdx];
+    try {
+      const res = await runAgentWithRetry(config, model, messages, options);
+      legs++;
+      last = { ...res, model };
+      if (res.text && res.text.trim()) messages.push({ role: 'assistant', content: res.text });
+
+      if (res.stopReason !== 'max_steps') {
+        return { ...res, model, failedOver: modelIdx > 0 }; // coder finished on its own
+      }
+
+      // Hit the per-leg step cap with work remaining. Keep the same coder going for a few
+      // legs, then hand off to a fresh coder so we don't burn the whole budget on one.
+      continuesOnThisModel++;
+      if (continuesOnThisModel >= maxContinues && modelIdx + 1 < models.length) {
+        options?.onContinue?.({ model, leg: legs, reason: 'handoff' });
+        options?.onFailover?.({ from: model, to: models[modelIdx + 1], index: modelIdx + 1, error: 'step cap reached repeatedly' });
+        messages.push({ role: 'user', content: HANDOFF_PROMPT });
+        modelIdx++;
+        continuesOnThisModel = 0;
+      } else {
+        options?.onContinue?.({ model, leg: legs, reason: 'step-cap' });
+        messages.push({ role: 'user', content: CONTINUE_PROMPT });
+      }
+    } catch (err: any) {
+      lastErr = err;
+      if (isAbortError(err, options?.signal)) throw err;
+      const nextIdx = modelIdx + 1;
+      if (nextIdx < models.length) {
+        options?.onFailover?.({ from: model, to: models[nextIdx], index: nextIdx, error: err?.message ?? String(err) });
+        messages.push({ role: 'user', content: HANDOFF_PROMPT });
+      }
+      modelIdx = nextIdx;
+      continuesOnThisModel = 0;
+    }
+  }
+
+  if (last) return { ...last, failedOver: modelIdx > 0 };
+  throw lastErr ?? new Error('All coders failed');
 }

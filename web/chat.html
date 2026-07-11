@@ -275,6 +275,7 @@
           case "tool_call": events.innerHTML += `<div class="evt"><span class="tool">▸ ${esc(e.name)}</span> ${esc(JSON.stringify(e.args || {}).slice(0, 120))}</div>`; scrollDown(); break;
           case "tool_result": events.innerHTML += `<div class="evt">&nbsp;&nbsp;→ ${esc((e.output || "").slice(0, 160))}</div>`; break;
           case "failover": events.innerHTML += `<div class="evt failover">! failing over → ${esc(e.to)} (${esc(e.error || "")})</div>`; break;
+          case "continue": if (e.reason === "step-cap") events.innerHTML += `<div class="evt">… ${esc(short(e.model))} hit the step cap — continuing (task not done yet)</div>`; scrollDown(); break;
           case "skills": bubble.insertAdjacentHTML("beforebegin", e.skills.map((s) => `<span class="chip">skill: ${esc(s)}</span>`).join("")); break;
           case "files": bubble.insertAdjacentHTML("beforebegin", e.files.map((f) => `<span class="chip">📎 ${esc(f)}</span>`).join("")); break;
           case "session": sessionId = e.sessionId; loadRecents(); break;

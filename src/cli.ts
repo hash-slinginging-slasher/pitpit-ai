@@ -2,7 +2,7 @@ import { createInterface, emitKeypressEvents, type Interface } from 'readline';
 import { watch, readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
 import { loadConfig, readAgents, updateConfigFile, providerOf, CONFIG_PATH, type AgentConfig } from './config.js';
-import { runAgentChain, isAbortError, type ChatMessage, type AgentEvent } from './agent.js';
+import { runAgentChain, runResilientChain, isAbortError, type ChatMessage, type AgentEvent } from './agent.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
 import { hasGit, isRepo, initRepo, commitAll, recentCommits } from './git.js';
@@ -818,7 +818,7 @@ async function main() {
     console.log(`  ${C.dim}(Esc to stop)${C.reset}`);
     try {
       const agentInput = isInit ? turnContent : messages.length > 1 ? messages : turnContent;
-      const result = await runAgentChain(config, activeChain, agentInput, {
+      const result = await runResilientChain(config, activeChain, agentInput, {
         signal: activeAbort.signal,
         onEvent: (e) => {
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
@@ -830,6 +830,10 @@ async function main() {
             // by activeIndex to show the absolute coder number.
             `\n${C.yellow}  ! coder ${activeIndex + index} failing over -> ${shortName(to)}${C.reset} ${C.dim}(${error})${C.reset}`,
           ),
+        onContinue: ({ model, reason }) => {
+          if (reason === 'step-cap')
+            console.log(`\n${C.dim}  … ${shortName(model)} hit the step cap — continuing the task (not done yet)${C.reset}`);
+        },
       });
       renderer.done();
       if (isInit) {

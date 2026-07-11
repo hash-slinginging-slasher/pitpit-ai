@@ -208,7 +208,15 @@ export interface AgentRunOptions {
   instructions?: string;
 }
 
-export type AgentRunResult = { text: string; usage: { inputTokens: number; outputTokens: number }; output: unknown[] };
+/** Why a run ended: the model finished, or it hit the per-leg tool-step cap mid-task. */
+export type StopReason = 'completed' | 'max_steps';
+export type AgentRunResult = {
+  text: string;
+  usage: { inputTokens: number; outputTokens: number };
+  output: unknown[];
+  /** Why the run ended. Absent (from subscription-CLI backends) is treated as 'completed'. */
+  stopReason?: StopReason;
+};
 
 /** How to reach one OpenAI-compatible backend (local llama.cpp, NVIDIA build, GitHub Models, …). */
 export interface OpenAICompatTarget {
@@ -247,6 +255,7 @@ export async function runOpenAICompatibleAgent(
   const usage = { inputTokens: 0, outputTokens: 0 };
   const callNames = new Map<string, string>();
   let finalText = '';
+  let stopReason: StopReason = 'max_steps'; // set to 'completed' only if the model stops calling tools
 
   for (let step = 0; step < config.maxSteps; step++) {
     // Esc between steps: throw so it stops like a cancel (not a silent empty result). A
@@ -262,6 +271,7 @@ export async function runOpenAICompatibleAgent(
 
     if (turn.toolCalls.length === 0) {
       finalText = turn.content;
+      stopReason = 'completed';
       break;
     }
 
@@ -309,7 +319,7 @@ export async function runOpenAICompatibleAgent(
     }
   }
 
-  return { text: finalText, usage, output: [] };
+  return { text: finalText, usage, output: [], stopReason };
 }
 
 /**
