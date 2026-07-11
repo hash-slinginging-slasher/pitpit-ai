@@ -1,6 +1,7 @@
 import { readFile } from 'fs/promises';
 import { basename } from 'path';
 import { glob } from 'glob';
+import { findSkill, type Skill } from './skills.js';
 
 /**
  * `@mention` file references in a CLI turn. Typing `@prd` fuzzy-matches project files
@@ -21,16 +22,30 @@ const MAX_TOTAL_BYTES = 300_000;
 // Doc-ish files rank above code when a token matches both (the feature is aimed at docs).
 const DOC_EXT = /\.(md|mdx|markdown|txt|rst|adoc|csv|json|ya?ml|pdf|docx?|xlsx?)$/i;
 
+// Cache the file listing briefly — Tab completion calls the completer repeatedly, and a
+// fresh `**/*` glob on every keypress would lag in a large repo.
+const listCache = new Map<string, { at: number; files: string[] }>();
+const LIST_TTL_MS = 3000;
+
+async function listProjectFiles(workDir: string): Promise<string[]> {
+  const hit = listCache.get(workDir);
+  if (hit && Date.now() - hit.at < LIST_TTL_MS) return hit.files;
+  const files = await glob('**/*', { cwd: workDir, nodir: true, ignore: IGNORE, posix: true });
+  listCache.set(workDir, { at: Date.now(), files });
+  return files;
+}
+
 export interface ResolvedMention {
   token: string;      // the text after @ (e.g. "prd")
   files: string[];    // posix-relative paths that matched (already deduped)
 }
 
 export interface MentionResolution {
-  /** The message with an appended "Referenced files" block (unchanged if no @mentions). */
+  /** The message with appended skill + file blocks (unchanged if no @mentions resolved). */
   text: string;
+  skills: string[];    // skill names loaded this turn (tokens that matched a skill)
   matched: ResolvedMention[];
-  unmatched: string[]; // tokens that matched no file
+  unmatched: string[]; // tokens that matched neither a skill nor a file
   truncated: boolean;  // hit a file/byte cap and left some content out
 }
 
@@ -67,17 +82,34 @@ function isBinary(buf: Buffer): boolean {
   return false;
 }
 
-export async function resolveMentions(input: string, workDir: string): Promise<MentionResolution> {
+export async function resolveMentions(
+  input: string,
+  workDir: string,
+  skills: Skill[] = [],
+): Promise<MentionResolution> {
   const tokens = findTokens(input);
-  if (!tokens.length) return { text: input, matched: [], unmatched: [], truncated: false };
+  if (!tokens.length) return { text: input, skills: [], matched: [], unmatched: [], truncated: false };
 
-  const all = await glob('**/*', { cwd: workDir, nodir: true, ignore: IGNORE, posix: true });
+  const all = await listProjectFiles(workDir);
 
+  const skillBlocks: string[] = [];
+  const skillsLoaded: string[] = [];
+  const seenSkill = new Set<string>();
   const matched: ResolvedMention[] = [];
   const unmatched: string[] = [];
   const seen = new Set<string>(); // dedupe files across tokens
 
   for (const token of tokens) {
+    // A token is a skill first, files second. @react-components loads a skill; @prd, files.
+    const skill = findSkill(skills, token);
+    if (skill) {
+      if (!seenSkill.has(skill.name)) {
+        seenSkill.add(skill.name);
+        skillsLoaded.push(skill.name);
+        skillBlocks.push(`<skill name="${skill.name}">\n${skill.body}\n</skill>`);
+      }
+      continue;
+    }
     const ranked = all
       .map((f) => ({ f, s: score(f, token) }))
       .filter((r): r is { f: string; s: number } => r.s !== null)
@@ -93,7 +125,9 @@ export async function resolveMentions(input: string, workDir: string): Promise<M
     matched.push({ token, files: take });
   }
 
-  if (!matched.length) return { text: input, matched: [], unmatched, truncated: false };
+  if (!matched.length && !skillBlocks.length) {
+    return { text: input, skills: skillsLoaded, matched: [], unmatched, truncated: false };
+  }
 
   // Inline the matched files (text only; binaries get a pointer to the view tools).
   let total = 0;
@@ -122,7 +156,50 @@ export async function resolveMentions(input: string, workDir: string): Promise<M
     }
   }
 
-  const text =
-    `${input}\n\n---\nReferenced files (from @mentions — read these to answer):\n\n${blocks.join('\n\n')}`;
-  return { text, matched, unmatched, truncated };
+  const sections: string[] = [input, '---'];
+  if (skillBlocks.length) {
+    sections.push(
+      'Apply the following skill(s) to this task — treat their instructions as authoritative:',
+      skillBlocks.join('\n\n'),
+    );
+  }
+  if (blocks.length) {
+    sections.push('Referenced files (from @mentions — read these to answer):', blocks.join('\n\n'));
+  }
+  return { text: sections.join('\n\n'), skills: skillsLoaded, matched, unmatched, truncated };
+}
+
+/**
+ * Readline completer for `@mentions`. When the line ends in a `@token`, returns matching
+ * skill names and file paths so Tab completes them. Returns `[completions, replacedText]`
+ * in the shape Node's readline expects; every completion begins with the `@token` being
+ * replaced (readline swaps the trailing match for the chosen completion).
+ *
+ * For a bare token (no slash) it offers skill names and matching file **basenames**; once
+ * the token contains a `/` it offers full relative **paths** so you can drill into folders.
+ */
+export async function mentionCompletions(
+  line: string,
+  workDir: string,
+  skills: Skill[] = [],
+): Promise<[string[], string]> {
+  const m = line.match(/@([A-Za-z0-9._\-/]*)$/);
+  if (!m) return [[], line];
+  const token = m[1];
+  const t = token.toLowerCase();
+  const completeOn = '@' + token;
+  const out = new Set<string>();
+
+  if (!token.includes('/')) {
+    for (const s of skills) if (s.name.toLowerCase().startsWith(t)) out.add('@' + s.name);
+  }
+
+  const files = await listProjectFiles(workDir);
+  for (const f of files) {
+    // Every candidate must start with completeOn or readline can't splice it in.
+    if (f.toLowerCase().startsWith(t)) out.add('@' + f); // path-prefix (drilling)
+    else if (!token.includes('/') && basename(f).toLowerCase().startsWith(t)) out.add('@' + basename(f));
+  }
+
+  return [[...out].sort().slice(0, 50), completeOn];
 }
