@@ -6,6 +6,7 @@ import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, save
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
+import { loadBrain, BRAIN_DIR } from '../src/brain.js';
 import { loadSkillsFor } from '../src/skills.js';
 import { resolveMentions } from '../src/mentions.js';
 import { WebSocketServer } from 'ws';
@@ -437,6 +438,14 @@ const server = createServer(async (req, res) => {
     // The server's working directory (the folder the GUI agent edits by default).
     if (req.method === 'GET' && url.pathname === '/api/cwd') {
       json(res, 200, { cwd: process.cwd(), name: basename(process.cwd()) || process.cwd() });
+      return;
+    }
+
+    // Project brain: list notes (name + content) for the Brain tab. Links/backlinks/graph
+    // are computed client-side from the content. Notes live at <cwd>/.codigo/brain/*.md.
+    if (req.method === 'GET' && url.pathname === '/api/brain') {
+      const cwd = url.searchParams.get('cwd') || process.cwd();
+      json(res, 200, { dir: `${BRAIN_DIR}`, notes: loadBrain(cwd).map((n) => ({ name: n.name, content: n.content })) });
       return;
     }
 

@@ -88,6 +88,22 @@
       .termbar .cwd { color: var(--accent); font-family: ui-monospace, Consolas, monospace; }
       .termbar button { margin-left: auto; background: var(--panel2); color: var(--dim); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
       .termbar button:hover { color: var(--text); border-color: var(--accent); }
+      /* Brain tab */
+      #brainView { display: flex; position: relative; }
+      .brainlist { width: 220px; flex: 0 0 220px; border-right: 1px solid var(--border); background: var(--panel); padding: 10px; display: flex; flex-direction: column; min-height: 0; }
+      .braineditor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      #brainContent { flex: 1; min-height: 0; background: var(--code); color: var(--text); border: none; outline: none; resize: none; padding: 14px; font: 13px/1.6 ui-monospace, Consolas, monospace; }
+      .brainlinks { border-top: 1px solid var(--border); padding: 8px 14px; font-size: 12px; color: var(--dim); max-height: 120px; overflow: auto; }
+      .brainlinks .lgroup { margin: 2px 0; }
+      .brainlinks a { color: var(--accent2); cursor: pointer; text-decoration: none; margin-right: 8px; }
+      .brainlinks a:hover { text-decoration: underline; }
+      .brainlinks a.missing { color: var(--warn); }
+      .braingraph { position: absolute; inset: 0; background: rgba(20,20,20,0.97); z-index: 5; }
+      .braingraph .gclose { position: absolute; top: 10px; right: 14px; z-index: 6; background: var(--panel2); color: var(--dim); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+      #brainSvg text { fill: var(--text); font: 11px sans-serif; cursor: pointer; }
+      #brainSvg line { stroke: var(--border); }
+      #brainSvg circle { fill: var(--accent); cursor: pointer; }
+      #brainSvg circle.active { fill: var(--good); }
       .term-instance { position: absolute; inset: 0; padding: 6px 8px; }
       .term-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
       .item .run-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-left: 6px; vertical-align: middle; }
@@ -179,6 +195,7 @@
             <div class="subtabs">
               <button id="subTerm" class="subtab active">Terminal</button>
               <button id="subFiles" class="subtab">Files</button>
+              <button id="subBrain" class="subtab">🧠 Brain</button>
             </div>
             <span class="cwd" id="termCwd">—</span>
             <span class="tspacer"></span>
@@ -186,6 +203,30 @@
           </div>
           <div class="term-empty" id="termEmpty">Pick a project (or open a folder) to launch Codigo here. Terminals keep running in the background when you switch projects.</div>
           <div id="termStack" style="display:none; position:relative; flex:1; min-height:0"></div>
+
+          <!-- BRAIN: the project's knowledge vault — notes, backlinks, graph -->
+          <div id="brainView" style="display:none; flex:1; min-height:0;">
+            <div class="brainlist">
+              <button class="newbtn" id="brainNew" style="margin-bottom:8px">+ New note</button>
+              <button class="newbtn" id="brainGraphBtn" style="margin-bottom:8px">◉ Graph view</button>
+              <div class="list-title">Notes</div>
+              <div class="scroll" id="brainNotes"></div>
+            </div>
+            <div class="braineditor">
+              <div class="editorbar">
+                <span class="epath" id="brainOpenName">no note open</span>
+                <span class="tspacer"></span>
+                <button id="brainSave" disabled>Save</button>
+                <button id="brainDelete" disabled>Delete</button>
+              </div>
+              <textarea id="brainContent" spellcheck="false" placeholder="Select or create a note. Use [[note-name]] to link notes; the agent reads &amp; writes these too."></textarea>
+              <div id="brainLinks" class="brainlinks"></div>
+            </div>
+            <div id="brainGraph" class="braingraph" style="display:none">
+              <button class="gclose" id="brainGraphClose">✕ close</button>
+              <svg id="brainSvg" width="100%" height="100%"></svg>
+            </div>
+          </div>
 
           <!-- FILES: live tree + editor + version history -->
           <div id="filesView" style="display:none; flex:1; min-height:0;">
@@ -481,33 +522,39 @@
       $("termClose").onclick = () => activeCwd && closeTerminal(activeCwd);
       window.addEventListener("resize", () => { if (mainMode === "terminal" && activeCwd && terminals.has(activeCwd)) fitTerm(terminals.get(activeCwd)); });
 
-      // ---------- Terminal | Files sub-tabs + file panel ----------
-      let mainMode = "terminal";      // 'terminal' | 'files'
+      // ---------- Terminal | Files | Brain sub-tabs ----------
+      let mainMode = "terminal";      // 'terminal' | 'files' | 'brain'
       let filesCwd = null, filesWs = null, openFilePath = null, treeData = [];
+      let brainNotesData = [], brainOpen = null;   // brain vault state
       const expanded = new Set();
 
       // Picking a project: browse its files (Files mode) or open its terminal (Terminal mode).
       function selectProject(cwd) {
         if (!cwd) return;
         activeCwd = cwd; highlightActive();
-        if (mainMode === "files") { filesCwd = cwd; loadTree(); connectFilesWs(); applyMainMode(); }
+        if (mainMode === "files") { filesCwd = cwd; loadTree(); connectFilesWs(); }
+        else if (mainMode === "brain") { brainOpen = null; loadBrainNotes(); }
         else openTerminal(cwd);
       }
 
       function applyMainMode() {
-        $("subTerm").classList.toggle("active", mainMode === "terminal");
-        $("subFiles").classList.toggle("active", mainMode === "files");
-        const filesOn = mainMode === "files";
-        $("filesView").style.display = filesOn ? "flex" : "none";
-        $("termCtrls").style.display = filesOn ? "none" : "";
+        const m = mainMode;
+        $("subTerm").classList.toggle("active", m === "terminal");
+        $("subFiles").classList.toggle("active", m === "files");
+        $("subBrain").classList.toggle("active", m === "brain");
+        $("filesView").style.display = m === "files" ? "flex" : "none";
+        $("brainView").style.display = m === "brain" ? "flex" : "none";
+        $("termCtrls").style.display = m === "terminal" ? "" : "none";
         const hasTerm = activeCwd && terminals.has(activeCwd);
-        $("termStack").style.display = !filesOn && hasTerm ? "block" : "none";
-        $("termEmpty").style.display = !filesOn && !hasTerm ? "flex" : "none";
-        if (filesOn) { if (!filesCwd) filesCwd = activeCwd; loadTree(); connectFilesWs(); }
+        $("termStack").style.display = m === "terminal" && hasTerm ? "block" : "none";
+        $("termEmpty").style.display = m === "terminal" && !hasTerm ? "flex" : "none";
+        if (m === "files") { if (!filesCwd) filesCwd = activeCwd; loadTree(); connectFilesWs(); }
+        else if (m === "brain") loadBrainNotes();
         else if (hasTerm) setTimeout(() => fitTerm(terminals.get(activeCwd)), 50);
       }
       $("subTerm").onclick = () => { mainMode = "terminal"; applyMainMode(); };
       $("subFiles").onclick = () => { mainMode = "files"; applyMainMode(); };
+      $("subBrain").onclick = () => { mainMode = "brain"; applyMainMode(); };
 
       async function loadTree() {
         let cwd = filesCwd || activeCwd;
@@ -633,6 +680,99 @@
           }
         };
         filesWs = ws;
+      }
+
+      // ---------- Brain tab (notes + backlinks + graph) ----------
+      const brainLinks = (content) => [...new Set([...(content || "").matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1].trim()))];
+
+      async function loadBrainNotes() {
+        let cwd = activeCwd;
+        if (!cwd) { try { cwd = (await (await fetch("/api/cwd")).json()).cwd; activeCwd = cwd; } catch (e) {} }
+        if (!cwd) return;
+        try {
+          const r = await (await fetch("/api/brain?cwd=" + encodeURIComponent(cwd))).json();
+          brainNotesData = r.notes || [];
+          if (brainOpen && !brainNotesData.some((n) => n.name === brainOpen)) brainOpen = null;
+          renderBrainList();
+          renderBrainLinks();
+        } catch (e) {}
+      }
+      function renderBrainList() {
+        const el = $("brainNotes"); el.innerHTML = "";
+        if (!brainNotesData.length) { el.innerHTML = `<div class="item" style="cursor:default">No notes yet — the agent writes these as it works, or add one.</div>`; return; }
+        for (const n of brainNotesData.slice().sort((a, b) => a.name.localeCompare(b.name))) {
+          const d = document.createElement("div");
+          d.className = "item" + (n.name === brainOpen ? " active" : "");
+          d.textContent = n.name;
+          d.onclick = () => openBrainNote(n.name);
+          el.appendChild(d);
+        }
+      }
+      function openBrainNote(name) {
+        const note = brainNotesData.find((n) => n.name === name);
+        brainOpen = name;
+        $("brainOpenName").textContent = name;
+        const ta = $("brainContent"); ta.value = note ? note.content : "# " + name + "\n\n"; ta.disabled = false;
+        $("brainSave").disabled = false; $("brainDelete").disabled = false;
+        renderBrainList(); renderBrainLinks();
+      }
+      function renderBrainLinks() {
+        const el = $("brainLinks");
+        if (!brainOpen) { el.innerHTML = ""; return; }
+        const names = new Set(brainNotesData.map((n) => n.name));
+        const cur = brainNotesData.find((n) => n.name === brainOpen);
+        const out = brainLinks(cur ? cur.content : $("brainContent").value);
+        const back = brainNotesData.filter((n) => n.name !== brainOpen && brainLinks(n.content).includes(brainOpen)).map((n) => n.name);
+        const render = (arr) => arr.length ? arr.map((nm) => `<a data-open="${esc(nm)}" class="${names.has(nm) ? "" : "missing"}">[[${esc(nm)}]]</a>`).join("") : `<span style="color:var(--muted)">none</span>`;
+        el.innerHTML = `<div class="lgroup"><b>Links →</b> ${render(out)}</div><div class="lgroup"><b>Backlinks ←</b> ${render(back)}</div>`;
+        el.querySelectorAll("[data-open]").forEach((a) => (a.onclick = () => { const nm = a.dataset.open; names.has(nm) ? openBrainNote(nm) : newBrainNote(nm); }));
+      }
+      $("brainContent").addEventListener("input", () => renderBrainLinks());
+      $("brainSave").onclick = async () => {
+        if (!brainOpen) return;
+        try {
+          await fetch("/api/file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cwd: activeCwd, path: ".codigo/brain/" + brainOpen + ".md", content: $("brainContent").value }) });
+          $("brainOpenName").textContent = brainOpen + "  ✓ saved";
+          const cur = brainNotesData.find((n) => n.name === brainOpen); if (cur) cur.content = $("brainContent").value;
+          setTimeout(() => { if (brainOpen) $("brainOpenName").textContent = brainOpen; }, 1500);
+          loadBrainNotes();
+        } catch (e) {}
+      };
+      $("brainDelete").onclick = async () => {
+        if (!brainOpen || !confirm("Delete note " + brainOpen + "?")) return;
+        try {
+          await fetch("/api/file/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cwd: activeCwd, path: ".codigo/brain/" + brainOpen + ".md" }) });
+          brainOpen = null; $("brainContent").value = ""; $("brainOpenName").textContent = "no note open";
+          $("brainSave").disabled = $("brainDelete").disabled = true; $("brainLinks").innerHTML = "";
+          loadBrainNotes();
+        } catch (e) {}
+      };
+      function newBrainNote(preset) {
+        const raw = preset || prompt("New note name (letters, numbers, dashes):", "");
+        const name = (raw || "").trim().replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
+        if (!name) return;
+        if (!brainNotesData.some((n) => n.name === name)) brainNotesData.push({ name, content: "# " + name + "\n\n" });
+        openBrainNote(name);
+      }
+      $("brainNew").onclick = () => newBrainNote();
+
+      // Simple radial graph: nodes = notes, edges = [[links]].
+      $("brainGraphBtn").onclick = () => { $("brainGraph").style.display = "block"; setTimeout(renderBrainGraph, 40); };
+      $("brainGraphClose").onclick = () => ($("brainGraph").style.display = "none");
+      function renderBrainGraph() {
+        const svg = $("brainSvg");
+        const W = svg.clientWidth || 800, H = svg.clientHeight || 500;
+        const names = brainNotesData.map((n) => n.name);
+        const idx = Object.fromEntries(names.map((n, i) => [n, i]));
+        const cx = W / 2, cy = H / 2, R = Math.max(60, Math.min(W, H) / 2 - 70);
+        const pos = names.map((n, i) => { const a = names.length === 1 ? 0 : (i / names.length) * Math.PI * 2 - Math.PI / 2; return { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) }; });
+        const edges = [];
+        brainNotesData.forEach((n, i) => brainLinks(n.content).forEach((t) => { if (idx[t] != null) edges.push([i, idx[t]]); }));
+        let html = "";
+        for (const [a, b] of edges) html += `<line x1="${pos[a].x}" y1="${pos[a].y}" x2="${pos[b].x}" y2="${pos[b].y}"/>`;
+        names.forEach((n, i) => { html += `<circle cx="${pos[i].x}" cy="${pos[i].y}" r="${n === brainOpen ? 9 : 6}" class="${n === brainOpen ? "active" : ""}" data-node="${esc(n)}"/><text x="${pos[i].x + 11}" y="${pos[i].y + 4}" data-node="${esc(n)}">${esc(n)}</text>`; });
+        svg.innerHTML = html || `<text x="20" y="30">No notes yet.</text>`;
+        svg.querySelectorAll("[data-node]").forEach((el) => (el.onclick = () => { openBrainNote(el.dataset.node); $("brainGraph").style.display = "none"; }));
       }
 
       // ---------- input UX ----------
