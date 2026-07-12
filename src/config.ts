@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { release, version } from 'os';
+import { createHash } from 'crypto';
 
 /**
  * Write a file atomically: write a temp file then rename over the target, so a
@@ -161,6 +162,61 @@ export function readApiKeys(): string[] {
 /** The primary OpenRouter API key (first in try-order). Empty string if none configured. */
 export function readApiKey(): string {
   return readApiKeys()[0] || '';
+}
+
+/**
+ * Per-key cooldowns. When an OpenRouter key hits a daily/rate limit we record when it
+ * becomes usable again (epoch ms), keyed by a fingerprint of the key (never the raw key).
+ * Persisted next to secrets.json so a key that's "done for the day" stays skipped across
+ * tasks and restarts, not just within one request.
+ */
+const COOLDOWN_PATH = resolve(APP_DIR, '.key-cooldowns.json');
+
+/** Stable, non-reversible fingerprint of a key (so the cooldown file holds no real keys). */
+function keyId(key: string): string {
+  return createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+/** Read the cooldown map, dropping entries whose cooldown has already elapsed. */
+export function readKeyCooldowns(): Record<string, number> {
+  let raw: Record<string, number> = {};
+  try {
+    if (existsSync(COOLDOWN_PATH)) raw = readJsonFile(COOLDOWN_PATH);
+  } catch {
+    /* ignore malformed file */
+  }
+  const now = Date.now();
+  const live: Record<string, number> = {};
+  for (const [id, until] of Object.entries(raw)) if (typeof until === 'number' && until > now) live[id] = until;
+  return live;
+}
+
+/** Mark a key as unusable until `untilMs` (epoch ms). No-op if the timestamp is in the past. */
+export function markKeyCooldown(key: string, untilMs: number): void {
+  if (!key || !(untilMs > Date.now())) return;
+  const map = readKeyCooldowns();
+  map[keyId(key)] = untilMs;
+  writeFileAtomic(COOLDOWN_PATH, JSON.stringify(map, null, 2) + '\n');
+}
+
+/** Cooldown expiry for a key (epoch ms), or 0 if it's currently usable. */
+export function keyCooldownUntil(key: string): number {
+  return readKeyCooldowns()[keyId(key)] ?? 0;
+}
+
+/**
+ * OpenRouter keys in the order the runtime should try them: keys currently in cooldown
+ * (rate-limited "for the day") are skipped while any usable key remains, so we don't keep
+ * hammering a key that's done until midnight. If EVERY key is cooling down, return them all
+ * ordered by soonest reset (so we still attempt something and surface a fresh error).
+ */
+export function orderedApiKeys(): string[] {
+  const keys = readApiKeys();
+  if (keys.length <= 1) return keys;
+  const cd = readKeyCooldowns();
+  const active = keys.filter((k) => !cd[keyId(k)]);
+  if (active.length) return active;
+  return keys.slice().sort((a, b) => (cd[keyId(a)] ?? 0) - (cd[keyId(b)] ?? 0));
 }
 
 /** Resolve the Postgres connection string: DATABASE_URL env overrides the Settings-saved value. */

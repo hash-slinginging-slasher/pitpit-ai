@@ -217,6 +217,7 @@
             <input id="keyInput" type="password" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false" />
             <div class="show-key"><label><input type="checkbox" id="showKey" /> show</label><button id="copyKey" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><button id="addOrKey" class="btn-ghost" style="margin:0;padding:3px 9px;" title="Add a fallback OpenRouter key — used automatically when the one above is rate-limited or out of credit">+ add key</button><span id="copyKeyStatus"></span></div>
             <div id="orExtraKeys"></div>
+            <div id="orKeyNote" style="font-size:12px; margin-top:6px;"></div>
           </div>
           <div class="field">
             <label for="nvidiaInput">NVIDIA build API key <span style="color:var(--dim)">(<code>nvidia-build/…</code>)</span></label>
@@ -794,11 +795,26 @@
         orDirty = false;
         updateOrKeyCount();
       }
+      // Show which keys are "benched" (hit a daily/rate limit) and until when, so it's clear
+      // why the primary might be getting skipped. cooldowns[] aligns with the key order.
+      function updateOrKeyNote(cooldowns) {
+        const el = $("orKeyNote"); if (!el) return;
+        const now = Date.now();
+        const benched = (cooldowns || []).map((u, i) => (u > now ? { i, u } : null)).filter(Boolean);
+        if (!benched.length) { el.textContent = ""; return; }
+        const fmt = (u) => new Date(u).toLocaleString([], { hour: "2-digit", minute: "2-digit", month: "short", day: "numeric" });
+        const firstActive = (cooldowns || []).findIndex((u) => !(u > now));
+        const parts = benched.map((b) => `key ${b.i + 1} until ${fmt(b.u)}`);
+        el.innerHTML = `⏳ Benched (rate-limited): ${parts.join(", ")}.` +
+          (firstActive >= 0 ? ` Using key ${firstActive + 1}.` : ` All keys benched — will retry the soonest.`);
+        el.style.color = "var(--warn)";
+      }
 
       async function loadSettings() {
         try {
           const s = await (await fetch("/api/settings")).json();
           renderOrExtraKeys(s.keysMasked);
+          updateOrKeyNote(s.keyCooldowns);
           keyIsSet = s.hasKey;
           reflectKeyState();
           $("settingsStatus").textContent = "";

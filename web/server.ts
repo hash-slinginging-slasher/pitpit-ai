@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync, statSync, watch } from 'fs';
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readApiKeys, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readApiKeys, keyCooldownUntil, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
@@ -380,6 +380,7 @@ const server = createServer(async (req, res) => {
         keyMasked: maskKey(key),
         keyCount: orKeys.length,
         keysMasked: orKeys.map(maskKey),
+        keyCooldowns: orKeys.map((k) => keyCooldownUntil(k) || 0),
         fromEnv: !!process.env.OPENROUTER_API_KEY,
         hasDb: !!dbUrl,
         dbMasked: maskDbUrl(dbUrl),

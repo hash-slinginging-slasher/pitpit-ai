@@ -11,7 +11,8 @@ import {
   readNvidiaKey,
   readGithubToken,
   readGroqKey,
-  readApiKeys,
+  orderedApiKeys,
+  markKeyCooldown,
 } from './config.js';
 import { runLocalAgent, runOpenAICompatibleAgent } from './local-agent.js';
 import { runCliAgent } from './providers/cli-agent.js';
@@ -66,6 +67,27 @@ function isKeyExhausted(err: any): boolean {
   );
 }
 
+/** Next 00:00 UTC after `now` — when OpenRouter's free-models-per-day quota resets. */
+function nextUtcMidnight(now: number): number {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
+}
+
+/**
+ * How long to bench an exhausted key. A daily/credit limit ("free-models-per-day", out of
+ * credit, 402) is done until the next UTC midnight; a plain per-minute rate limit recovers
+ * quickly, so bench it only briefly.
+ */
+function cooldownUntilFor(err: any): number {
+  const now = Date.now();
+  const msg = String(err?.message || '');
+  const s = err?.status ?? err?.statusCode;
+  if (s === 402 || /per.?day|daily|free-models-per-day|add .*credit|insufficient|payment required/i.test(msg)) {
+    return nextUtcMidnight(now);
+  }
+  return now + 5 * 60_000; // transient rate limit / auth blip
+}
+
 export async function runAgent(
   config: AgentConfig,
   model: string,
@@ -109,7 +131,9 @@ export async function runAgent(
   // OpenRouter: try each configured key in order, rotating to the next when one is
   // rate-limited / out of credit (a key problem, not a model problem). Only rotate before
   // any text has streamed — once the model has emitted output, retrying would duplicate it.
-  const keys = readApiKeys();
+  // orderedApiKeys() skips keys benched for the day, so an exhausted key stays skipped across
+  // tasks (not just within one request) until its cooldown lapses.
+  const keys = orderedApiKeys();
   const keyList = keys.length ? keys : [config.apiKey];
   let streamedAny = false;
   const rotOptions: RunOptions | undefined = options?.onEvent
@@ -129,10 +153,12 @@ export async function runAgent(
     } catch (err: any) {
       lastErr = err;
       if (isAbortError(err, options?.signal)) throw err;
-      const canRotate = ki < keyList.length - 1 && !streamedAny && isKeyExhausted(err);
-      if (!canRotate) throw err;
+      const exhausted = !streamedAny && isKeyExhausted(err);
+      // Bench this key so later tasks skip it (a daily limit lasts until UTC midnight).
+      if (exhausted) markKeyCooldown(keyList[ki], cooldownUntilFor(err));
+      if (!(exhausted && ki < keyList.length - 1)) throw err;
       console.warn(
-        `[openrouter] key ${ki + 1}/${keyList.length} exhausted (${err?.status ?? ''} ${String(err?.message ?? '').slice(0, 80)}); trying next key`,
+        `[openrouter] key ${ki + 1}/${keyList.length} exhausted (${err?.status ?? ''} ${String(err?.message ?? '').slice(0, 80)}); benched, trying next key`,
       );
     }
   }

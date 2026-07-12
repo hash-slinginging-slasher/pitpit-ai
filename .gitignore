@@ -4,3 +4,5 @@ dist/
 secrets.json
 .sessions/
 _scratch*/
+
+.key-cooldowns.json
