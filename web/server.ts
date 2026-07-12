@@ -279,7 +279,7 @@ const server = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += chunk;
       const { agent, models } = JSON.parse(body || '{}');
-      if (!AGENT_KINDS.includes(agent)) return json(res, 400, { error: 'agent must be coder|image|doc' });
+      if (!AGENT_KINDS.includes(agent)) return json(res, 400, { error: `agent must be one of ${AGENT_KINDS.join('|')}` });
       if (!Array.isArray(models) || !models.every((m) => typeof m === 'string'))
         return json(res, 400, { error: 'models must be an array of strings' });
       const agents = saveAgentChain(agent as AgentKind, models);

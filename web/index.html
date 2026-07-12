@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenRouter Agents</title>
+    <title>Codigo Agents</title>
     <style>
       :root {
         --bg: #0d1117;
@@ -161,7 +161,7 @@
     <header>
       <button id="openSettings" class="gear">⚙ Settings</button>
       <a href="/projects" class="gear" style="right: 130px; text-decoration: none;">📁 Projects</a>
-      <h1>OpenRouter Agents</h1>
+      <h1>Codigo Agents</h1>
       <div class="tabs" id="tabs"></div>
       <div class="chain-wrap">
         <div class="chain-title" id="chainTitle">Coder failover chain</div>
@@ -242,16 +242,17 @@
       const $ = (id) => document.getElementById(id);
 
       const AGENTS = [
-        { key: "coder", label: "Coder Agent", hint: "code · files · shell", filter: () => true },
+        { key: "orchestrator", label: "Orchestrators", hint: "plans · delegates · manages coders", filter: () => true },
+        { key: "coder", label: "Coder Agents", hint: "code · files · shell", filter: () => true },
         {
           key: "image",
-          label: "Image Agent",
+          label: "Image Agents",
           hint: "image generation",
           filter: (m) => m.outputModalities.includes("image"),
         },
         {
           key: "doc",
-          label: "Doc Agent",
+          label: "Doc Agents",
           hint: "pdf · csv · xlsx · docs",
           filter: (m) => m.inputModalities.includes("file"),
         },
@@ -271,7 +272,7 @@
       const catalogCache = {};      // source key -> models[]
       let cliStatus = [];           // [{name,label,installed,loggedIn}]
       let source = "openrouter";
-      let agents = { coder: [], image: [], doc: [] };
+      let agents = { orchestrator: [], coder: [], image: [], doc: [] };
       let activeTab = "coder";
 
       const agentDef = () => AGENTS.find((a) => a.key === activeTab);

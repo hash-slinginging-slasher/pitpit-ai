@@ -66,9 +66,10 @@ export function osInfo(): { os: string; shell: string; guidance: string } {
   };
 }
 
-/** The three agent kinds, each with its own ordered failover chain of models. */
-export type AgentKind = 'coder' | 'image' | 'doc';
-export const AGENT_KINDS: AgentKind[] = ['coder', 'image', 'doc'];
+/** The agent kinds, each with its own ordered failover chain of models. The
+ * orchestrator plans/manages a task and delegates to the coder chain. */
+export type AgentKind = 'orchestrator' | 'coder' | 'image' | 'doc';
+export const AGENT_KINDS: AgentKind[] = ['orchestrator', 'coder', 'image', 'doc'];
 
 /** Ordered model chains per agent: index 0 is primary, the rest are failovers. */
 export type AgentChains = Record<AgentKind, string[]>;
@@ -293,7 +294,7 @@ export function localBaseUrl(): string {
 
 const DEFAULTS: AgentConfig = {
   apiKey: '',
-  agents: { coder: [], image: [], doc: [] },
+  agents: { orchestrator: [], coder: [], image: [], doc: [] },
   name: 'OpenRouter Coding Agent',
   theme: 'default',
   systemPrompt: [
@@ -348,7 +349,7 @@ export function loadConfig(
   opts?: { skipApiKey?: boolean },
 ): AgentConfig {
   loadDotEnv(); // optional legacy support; not required
-  let config: AgentConfig = { ...DEFAULTS, agents: { coder: [], image: [], doc: [] } };
+  let config: AgentConfig = { ...DEFAULTS, agents: { orchestrator: [], coder: [], image: [], doc: [] } };
 
   if (existsSync(CONFIG_PATH)) {
     const file = readJsonFile(CONFIG_PATH);
@@ -377,7 +378,7 @@ export function loadConfig(
 
 /** Build the agent chains from a raw config file, migrating the legacy single `model`. */
 function normalizeAgents(file: any): AgentChains {
-  const out: AgentChains = { coder: [], image: [], doc: [] };
+  const out: AgentChains = { orchestrator: [], coder: [], image: [], doc: [] };
   const a = file?.agents ?? {};
   for (const kind of AGENT_KINDS) {
     if (Array.isArray(a[kind])) out[kind] = a[kind].filter((m: unknown): m is string => typeof m === 'string');
@@ -394,7 +395,7 @@ export function readAgents(): AgentChains {
   } catch {
     /* ignore */
   }
-  return { coder: [], image: [], doc: [] };
+  return { orchestrator: [], coder: [], image: [], doc: [] };
 }
 
 /** Persist one agent's ordered model chain to the config file, preserving other fields. */
