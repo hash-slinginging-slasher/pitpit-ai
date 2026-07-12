@@ -194,8 +194,19 @@ export async function runOrchestrated(
       step.status = 'done';
     } catch (err: any) {
       if (isAbortError(err, options?.signal)) throw err;
+      // A thrown error here means EVERY coder in the chain failed this step (all rate-limited
+      // or erroring). Re-trying more steps against the same exhausted chain just repeats the
+      // failures, so stop and surface it as action-required instead of cycling.
       step.status = 'failed';
       step.note = (err?.message ?? String(err)).slice(0, 160);
+      setCard(step, 'pending', 'all coders failed');
+      emit({ type: 'step', phase: 'failed', index: i, total: ledger.length, title: step.title, note: 'all coders failed' });
+      const e: any = new Error(
+        `Every coder failed step ${i + 1} — likely rate limits or invalid model ids. ` +
+          `Fix the coder chain in Models & settings (remove models returning 403/404/413, wait out rate limits). ` +
+          `Last error: ${(err?.message ?? String(err)).slice(0, 140)}`,
+      );
+      throw e; // bail the whole orchestration; the CLI/chat renders this in red
     }
 
     // 3) REVIEW: let the orchestrator assess and (maybe) adjust the plan.
