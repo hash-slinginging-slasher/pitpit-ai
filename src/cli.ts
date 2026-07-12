@@ -346,7 +346,7 @@ async function main() {
   setShellApproval(async (command) => {
     const ans = await question(
       rl,
-      `\n${C.yellow}Run shell command?${C.reset} ${C.bold}${command}${C.reset}\n${C.dim}[y = yes, a = always this session, anything else = no]${C.reset} `,
+      `\n${C.red}⚠ Approve shell command?${C.reset} ${C.bold}${command}${C.reset}\n${C.red}[y = yes, a = always this session, anything else = no]${C.reset} `,
     );
     const a = ans.trim().toLowerCase();
     if (a === 'a') {
