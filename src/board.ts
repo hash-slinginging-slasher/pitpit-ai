@@ -74,6 +74,11 @@ export function addTask(
   return task;
 }
 
+/** Fetch a single task by id, or null if not found. */
+export function getTask(cwd: string, id: string): Task | null {
+  return loadBoard(cwd).tasks.find((x) => x.id === id) ?? null;
+}
+
 /** Patch a task by id (status/title/detail). No-op if not found. */
 export function updateTask(cwd: string, id: string, patch: Partial<Pick<Task, 'title' | 'detail' | 'status'>>): Task | null {
   const board = loadBoard(cwd);
