@@ -3,7 +3,7 @@ import { watch, readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
 import { loadConfig, readAgents, updateConfigFile, providerOf, demoteModelInChain, removeModelFromChain, CONFIG_PATH, type AgentConfig } from './config.js';
 import { runAgentChain, runResilientChain, isAbortError, needsUserAction, type ChatMessage, type AgentEvent } from './agent.js';
-import { runOrchestrated, ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from './orchestrator.js';
+import { runConversationalOrchestrator, ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from './orchestrator.js';
 import { retrieveBrain, formatBrainContext } from './brain.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
@@ -945,6 +945,11 @@ async function main() {
             console.log(`  ${C.gray}⟢ coder ${activeIndex + e.index + 1}: ${C.reset}${C.cyan}${shortName(e.model)}${C.reset}`);
             return;
           }
+          if (e.type === 'delegate') {
+            // The orchestrator handing a task to a coder subagent.
+            console.log(`\n  ${C.magenta}⇢ delegating to a coder${C.reset} ${C.dim}${e.task}${C.reset}`);
+            return;
+          }
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
           renderer.handle(e);
         },
@@ -984,8 +989,10 @@ async function main() {
             : `${brain}\n\n---\n\n${turnContent}`;
         }
       }
-      const result = useOrchestrator
-        ? await runOrchestrated(config, orchestratorChain, activeChain, turnContent, sharedHandlers)
+      // Orchestrated turns run the CONVERSATIONAL orchestrator: you talk to it and it delegates
+      // coding to coder subagents (streaming their work), keeping context across turns.
+      const result: any = useOrchestrator
+        ? await runConversationalOrchestrator(config, orchestratorChain, activeChain, agentInput, sharedHandlers)
         : await runResilientChain(config, activeChain, resilientInput, sharedHandlers);
       renderer.done();
       if (isInit) {
@@ -994,9 +1001,9 @@ async function main() {
           `\n${C.green}[ok]${C.reset} ${ok ? `${CONTEXT_FILE} written and loaded as context.` : `Done (no ${CONTEXT_FILE} found - did the model write it?).`}`,
         );
       } else {
-        // Orchestration builds its summary (ledger) after the run, so it wasn't streamed —
-        // print it. Coder-only runs already streamed their text, so don't double-print.
-        if (useOrchestrator && result.text) console.log(`\n${result.text}\n`);
+        // The conversational orchestrator already streamed its messages as text events, so don't
+        // reprint (result.conversational). Coder-only runs also streamed their text.
+        if (useOrchestrator && !result.conversational && result.text) console.log(`\n${result.text}\n`);
         messages.push({ role: 'assistant', content: result.text });
         await log('assistant', result.text);
         memoryDirty = true; // new exchange worth folding into project memory

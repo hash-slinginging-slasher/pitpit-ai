@@ -123,7 +123,7 @@ function parseReview(text: string): { status: 'done' | 'failed' | 'task-complete
 async function orchestratorSay(
   config: AgentConfig,
   chain: string[],
-  input: string,
+  input: string | ChatMessage[],
   instructions: string,
   signal?: AbortSignal,
 ): Promise<string> {
@@ -345,4 +345,158 @@ export async function runOrchestrated(
     : `Ran ${executed} step(s): ${done} done${failed ? `, ${failed} failed` : ''}${executed >= maxSteps ? ' (step budget reached)' : ''}.`;
   const text = `${header}\n\n${ledgerView(task, ledger)}${lastText ? `\n\n---\n${lastText}` : ''}`;
   return { text, usage, model: lastModel, failedOver: false, ledger, stopReason: 'completed' as const };
+}
+
+// ---------------------------------------------------------------------------
+// Conversational orchestrator — you talk to the orchestrator (a manager) and it
+// delegates coding to coder subagents. Uses a text protocol (DELEGATE: lines) rather than
+// function-calling, because the orchestrator may be a weak/local model that handles a simple
+// line protocol far more reliably than tool schemas.
+// ---------------------------------------------------------------------------
+
+const CONVO_SYSTEM = [
+  'You are the ORCHESTRATOR — a hands-on engineering manager for this project. You talk WITH the',
+  'user and get work done by delegating to CODER SUBAGENTS. You do NOT write, edit, or run code',
+  'yourself; the coders have the file/shell tools.',
+  '',
+  'To delegate a task, put it on its OWN line beginning with "DELEGATE:" — for example:',
+  'DELEGATE: In snake.py, install any missing dependencies (e.g. pip install pygame) and make',
+  '`python snake.py` run without errors; report what you changed.',
+  'Rules for delegation:',
+  '- Each DELEGATE line is a single, self-contained instruction. A coder sees ONLY that line plus',
+  '  the project files — give it enough detail to act without the rest of the conversation.',
+  '- You may issue several DELEGATE lines to run in order. After they run you will see each',
+  "  coder's result and can respond to the user or delegate follow-ups.",
+  '- Prefer delegating the smallest concrete piece that moves the task forward.',
+  '',
+  'When the user is chatting, asking a question, or the work is done, reply normally with NO',
+  'DELEGATE line. Everything you write that is not a DELEGATE line is shown to the user as your',
+  'message, so be concise and clear. Do not narrate a plan you are not going to delegate.',
+].join('\n');
+
+/** Pull "DELEGATE: …" tasks out of the orchestrator's reply. */
+function parseDelegations(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const m = raw.trim().match(/^DELEGATE:\s*(.+)$/i);
+    if (m && m[1].trim()) out.push(m[1].trim().slice(0, 400));
+  }
+  return out;
+}
+/** The orchestrator's user-facing message = its reply minus the DELEGATE lines. */
+function stripDelegations(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*DELEGATE:/i.test(l))
+    .join('\n')
+    .trim();
+}
+
+/**
+ * Run one conversational turn: the orchestrator talks and delegates to coder subagents in a
+ * loop until it replies with no further delegation. Streams the orchestrator's messages and the
+ * coders' work through options.onEvent. Returns the final orchestrator message (for history).
+ */
+export async function runConversationalOrchestrator(
+  config: AgentConfig,
+  orchestratorChain: string[],
+  coderChain: string[],
+  input: string | ChatMessage[],
+  options?: OrchestrateOptions,
+) {
+  const emit = (e: AgentEvent) => options?.onEvent?.(e);
+  const cwd = process.cwd();
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  const abortCheck = () => {
+    if (options?.signal?.aborted) {
+      const e: any = new Error('Aborted by user');
+      e.name = 'AbortError';
+      throw e;
+    }
+  };
+
+  // Working copy of the conversation (the caller keeps the clean user/assistant history).
+  const messages: ChatMessage[] = typeof input === 'string' ? [{ role: 'user', content: input }] : [...input];
+
+  // Ground the orchestrator in the project (file map + brain relevant to the latest ask).
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+  const map = projectMap(cwd);
+  const brain = await brainContext(cwd, lastUser).catch(() => '');
+  const instructions = [CONVO_SYSTEM, map, brain].filter(Boolean).join('\n\n');
+
+  const maxRounds = options?.maxTaskSteps ?? 8;
+  let finalText = '';
+
+  for (let round = 0; round < maxRounds; round++) {
+    abortCheck();
+    const reply = await orchestratorSay(config, orchestratorChain, messages, instructions, options?.signal);
+    const delegations = parseDelegations(reply);
+    const speech = stripDelegations(reply);
+    if (speech) emit({ type: 'text', delta: (round ? '\n\n' : '') + speech + '\n' });
+    messages.push({ role: 'assistant', content: reply });
+    if (speech) finalText = speech;
+    if (!delegations.length) break;
+
+    // Re-read the coder chain each round so demotions/prunes/edits are picked up.
+    const coders = (() => {
+      try {
+        const c = readAgents().coder;
+        return c.length ? c : coderChain;
+      } catch {
+        return coderChain;
+      }
+    })();
+
+    for (const task of delegations) {
+      abortCheck();
+      emit({ type: 'delegate', task });
+      // Mirror the delegation onto the board (visible in the Board tab) as In Progress → Done.
+      let cardId: string | undefined;
+      try {
+        cardId = addTask(cwd, task, { status: 'pending', by: 'orchestrator' }).id;
+      } catch {
+        /* board best-effort */
+      }
+      const coderPrompt =
+        `You are a CODER SUBAGENT. The orchestrator has delegated this task to you — complete it ` +
+        `fully using your tools.\n\nTASK: ${task}\n\nThe project's files are listed in your system ` +
+        `prompt. If a dependency is missing, install it (pip/npm) and retry. When done, briefly ` +
+        `report what you changed and any commands you ran and their outcome.`;
+      let resultText = '';
+      try {
+        const res = await runResilientChain(config, coders, coderPrompt, {
+          signal: options?.signal,
+          onEvent: (e) => emit(e),
+          onFailover: options?.onFailover,
+          onContinue: options?.onContinue,
+        });
+        resultText = (res.text || '(no textual output)').slice(0, 2500);
+        if (res.usage) {
+          usage.inputTokens += res.usage.inputTokens ?? 0;
+          usage.outputTokens += res.usage.outputTokens ?? 0;
+        }
+      } catch (err: any) {
+        if (isAbortError(err, options?.signal)) throw err;
+        resultText = `FAILED: ${(err?.message ?? String(err)).slice(0, 240)}`;
+      }
+      if (cardId) {
+        try {
+          updateTask(cwd, cardId, { status: 'done', detail: resultText.slice(0, 160) });
+        } catch {
+          /* ignore */
+        }
+      }
+      // Feed the coder's result back so the orchestrator can review and respond/delegate more.
+      messages.push({ role: 'user', content: `[result from the coder for "${task.slice(0, 120)}"]\n${resultText}` });
+    }
+  }
+
+  return {
+    text: finalText || 'Done.',
+    usage,
+    model: orchestratorChain[0] ?? '',
+    failedOver: false,
+    conversational: true as const,
+    stopReason: 'completed' as const,
+  };
 }

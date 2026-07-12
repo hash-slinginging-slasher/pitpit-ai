@@ -28,6 +28,8 @@ export type AgentEvent =
   // Which coder model is actively running (emitted when a leg starts / the coder changes),
   // so the user can see who is doing the work.
   | { type: 'coder'; model: string; index: number }
+  // The conversational orchestrator handing a task to a coder subagent.
+  | { type: 'delegate'; task: string }
   // Orchestrator events (only emitted when an orchestrator model is configured):
   | { type: 'plan'; steps: string[]; orchestrator: string; resumed?: boolean; source?: string }
   | { type: 'step'; phase: 'start' | 'done' | 'failed'; index: number; total: number; title: string; note?: string };
