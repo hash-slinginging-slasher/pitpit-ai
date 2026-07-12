@@ -11,6 +11,7 @@ import { hasGit, isRepo, initRepo, commitAll, recentCommits, AGENT_AUTHOR } from
 import { resolveMentions, mentionCompletions } from './mentions.js';
 import { loadSkillsFor, skillIndex } from './skills.js';
 import { loadBoard, cleanBoard } from './board.js';
+import { projectMap } from './projectmap.js';
 
 /** Tools that change files on disk — a turn using any of these triggers an auto-commit. */
 const MUTATING_TOOLS = new Set([
@@ -296,6 +297,10 @@ async function main() {
         `do NOT search files or say you lack the information when the answer is here.\n\n${mem.join('\n\n')}`;
     }
     if (ctx) sp += `\n\n# Project context (from ${CONTEXT_FILE})\n${ctx}`;
+    // File map: enumerate the project's files up front so the coder knows what exists and
+    // doesn't burn turns re-listing/globbing to discover them (a common frustration).
+    const map = projectMap(workDir);
+    if (map) sp += `\n\n${map}`;
     // Brain: durable project knowledge the agent maintains + reads (relevant notes are
     // injected per turn/step when present). Nudge the agent to keep it up to date.
     sp +=
@@ -903,6 +908,9 @@ async function main() {
     }
     console.log();
     renderer.reset();
+    // Refresh the system prompt (incl. the project file map) so this turn reflects any files
+    // created/renamed since the last turn — the coder stays aware without re-listing.
+    if (!isInit) rebuildSystemPrompt();
 
     // Track which mutating tools ran this turn — if any, we auto-commit afterward.
     const mutated = new Set<string>();

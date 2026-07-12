@@ -8,6 +8,7 @@ import {
   type RunOptions,
 } from './agent.js';
 import { brainContext, retrieveBrain, formatBrainContext } from './brain.js';
+import { projectMap } from './projectmap.js';
 import { addTask, updateTask, loadBoard, deleteTask, isPlanEcho, isCorruptCard } from './board.js';
 import { readAgents } from './config.js';
 
@@ -202,9 +203,12 @@ export async function runOrchestrated(
     const notes = await retrieveBrain(boardCwd, task).catch(() => []);
     source = notes[0]?.name; // e.g. the PRD note this plan is derived from
     const planBrain = formatBrainContext(notes);
+    // Enumerate the project's files so the planner references real files (and the coder isn't
+    // asked to "find" things that are already listed here).
+    const map = projectMap(boardCwd);
     let plan: string[] | null = null;
     try {
-      const planInput = (planBrain ? `${planBrain}\n\n---\n\n` : '') + task;
+      const planInput = [map, planBrain, task].filter(Boolean).join('\n\n---\n\n');
       const planText = await orchestratorSay(config, orchestratorChain, planInput, PLAN_INSTRUCTIONS, options?.signal);
       plan = parsePlan(planText);
     } catch (err) {
