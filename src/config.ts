@@ -255,6 +255,15 @@ export function readGroqKey(): string {
 }
 
 /**
+ * The embedding model id used for the project brain's semantic search (prefixed like any
+ * model, e.g. local/nomic-embed-text, github-models/text-embedding-3-small). Empty = brain
+ * uses keyword retrieval. CODIGO_EMBED_MODEL env overrides the Settings-saved value.
+ */
+export function embeddingModel(): string {
+  return process.env.CODIGO_EMBED_MODEL || readSecrets().embeddingModel || '';
+}
+
+/**
  * Resolve a Gemini API key (Google AI Studio). Precedence: GEMINI_API_KEY →
  * GOOGLE_API_KEY env → secrets.json `geminiApiKey`. When present, cli/gemini uses the
  * public Generative Language API instead of the CLI's Code Assist OAuth backend.

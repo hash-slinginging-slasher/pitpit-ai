@@ -4,7 +4,7 @@ import { resolve, basename } from 'path';
 import { loadConfig, readAgents, updateConfigFile, providerOf, demoteModelInChain, CONFIG_PATH, type AgentConfig } from './config.js';
 import { runAgentChain, runResilientChain, isAbortError, needsUserAction, type ChatMessage, type AgentEvent } from './agent.js';
 import { runOrchestrated } from './orchestrator.js';
-import { brainContext, brainHitCount } from './brain.js';
+import { retrieveBrain, formatBrainContext } from './brain.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
 import { hasGit, isRepo, initRepo, commitAll, recentCommits, AGENT_AUTHOR } from './git.js';
@@ -869,9 +869,10 @@ async function main() {
       // (The orchestrator does its own brain retrieval per plan + per step.)
       let resilientInput: string | ChatMessage[] = agentInput;
       if (!useOrchestrator && !isInit) {
-        const brain = brainContext(workDir, turnContent);
-        if (brain) {
-          console.log(`  ${C.magenta}🧠 brain: ${brainHitCount(workDir, turnContent)} relevant note(s) in context${C.reset}`);
+        const notes = await retrieveBrain(workDir, turnContent);
+        if (notes.length) {
+          const brain = formatBrainContext(notes);
+          console.log(`  ${C.magenta}🧠 brain: ${notes.length} relevant note(s) in context${C.reset}`);
           resilientInput = Array.isArray(agentInput)
             ? [{ role: 'system', content: brain }, ...agentInput]
             : `${brain}\n\n---\n\n${turnContent}`;

@@ -244,6 +244,10 @@
           </div>
         </div>
 
+        <label for="embedInput" style="margin-top: 16px;">Brain embedding model <span style="color:var(--dim)">(semantic search for the project brain — leave empty to use keyword search)</span></label>
+        <input id="embedInput" type="text" placeholder="e.g. local/nomic-embed-text · github-models/text-embedding-3-small · nvidia-build/nvidia/nv-embedqa-e5-v5" autocomplete="off" spellcheck="false" />
+        <div class="show-key"><span id="embedStatus"></span></div>
+
         <label for="dbInput" style="margin-top: 16px;">Postgres connection URL (for projects &amp; history)</label>
         <input id="dbInput" type="text" placeholder="postgres://user:pass@localhost:5432/dbname" autocomplete="off" spellcheck="false" />
         <div class="show-key">
@@ -742,6 +746,10 @@
           $("dbStatus").textContent = s.hasDb ? "configured" : "not set";
           $("dbStatus").style.color = s.hasDb ? "var(--good)" : "var(--dim)";
           if (s.localBaseUrl) { localBaseUrlHint = s.localBaseUrl; const el = document.getElementById("localUrlHint2"); if (el) el.textContent = s.localBaseUrl; }
+          $("embedInput").value = s.embedModel || "";
+          $("embedInput").dataset.loaded = s.embedModel || "";
+          $("embedStatus").textContent = s.embedModel ? "semantic search on ✓" : "keyword search (no embedding model set)";
+          $("embedStatus").style.color = s.embedModel ? "var(--good)" : "var(--dim)";
           KEY_FIELDS.forEach((f) => fillKeyField(f, s));
         } catch (e) {}
       }
@@ -772,6 +780,8 @@
         });
         const dbUrl = $("dbInput").value.trim();
         if (dbUrl) payload.databaseUrl = dbUrl;
+        const embed = $("embedInput").value.trim();
+        if (embed !== ($("embedInput").dataset.loaded || "")) payload.embeddingModel = embed;
         if (!Object.keys(payload).length) { $("settingsStatus").textContent = "No changes to save."; $("settingsStatus").className = "status"; return; }
         $("settingsStatus").textContent = "Saving…"; $("settingsStatus").className = "status";
         try {

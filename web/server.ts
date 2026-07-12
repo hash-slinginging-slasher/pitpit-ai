@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync, statSync, watch } from 'fs';
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
@@ -371,6 +371,7 @@ const server = createServer(async (req, res) => {
         hasJules: !!readJulesApiKey(),
         julesMasked: maskKey(readJulesApiKey()),
         julesFromEnv: !!process.env.JULES_API_KEY,
+        embedModel: embeddingModel(),
       });
       return;
     }
@@ -379,7 +380,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/settings') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken, groqApiKey, geminiApiKey, julesApiKey } = JSON.parse(body || '{}');
+      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken, groqApiKey, geminiApiKey, julesApiKey, embeddingModel: embedModelInput } = JSON.parse(body || '{}');
       const patch: Record<string, string> = {};
       if (typeof openrouterApiKey === 'string') patch.openrouterApiKey = openrouterApiKey.trim();
       if (typeof databaseUrl === 'string') patch.databaseUrl = databaseUrl.trim();
@@ -388,6 +389,7 @@ const server = createServer(async (req, res) => {
       if (typeof groqApiKey === 'string') patch.groqApiKey = groqApiKey.trim();
       if (typeof geminiApiKey === 'string') patch.geminiApiKey = geminiApiKey.trim();
       if (typeof julesApiKey === 'string') patch.julesApiKey = julesApiKey.trim();
+      if (typeof embedModelInput === 'string') patch.embeddingModel = embedModelInput.trim();
       if (!Object.keys(patch).length) return json(res, 400, { error: 'nothing to save' });
       saveSecrets(patch);
       const key = apiKeyNow();

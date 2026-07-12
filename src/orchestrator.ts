@@ -120,7 +120,7 @@ export async function runOrchestrated(
 
   // 1) PLAN — informed by the project brain (durable notes about this project).
   abortCheck();
-  const planBrain = brainContext(process.cwd(), task);
+  const planBrain = await brainContext(process.cwd(), task);
   let plan: string[] | null = null;
   try {
     const planInput = (planBrain ? `${planBrain}\n\n---\n\n` : '') + task;
@@ -149,7 +149,7 @@ export async function runOrchestrated(
 
     // Delegate the step to the (resilient) coder chain, with the ledger + the brain notes
     // relevant to THIS step (the orchestrator handing project details down to the coder).
-    const stepBrain = brainContext(process.cwd(), `${task}\n${step.title}`);
+    const stepBrain = await brainContext(process.cwd(), `${task}\n${step.title}`);
     const stepPrompt =
       (stepBrain ? `${stepBrain}\n\n---\n\n` : '') +
       `${ledgerView(task, ledger)}\n\n` +

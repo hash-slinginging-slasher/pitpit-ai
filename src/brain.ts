@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, appendFileSync } from 'fs';
 import { join } from 'path';
+import { embeddingModel } from './config.js';
+import { embeddingsEnabled, embedTexts, embedOne, cosine } from './embeddings.js';
 
 /**
  * Project "brain" — a per-project markdown knowledge vault at `.codigo/brain/`.
@@ -53,7 +55,7 @@ function tokenize(s: string): string[] {
 }
 
 /** Keyword-retrieve the notes most relevant to `query`, bounded in count and size. */
-export function retrieveBrain(
+export function retrieveBrainKeyword(
   cwd: string,
   query: string,
   opts?: { maxNotes?: number; perNoteChars?: number; totalChars?: number },
@@ -87,9 +89,112 @@ export function retrieveBrain(
   return out;
 }
 
-/** Formatted brain context for injection, or '' if no relevant notes. */
-export function brainContext(cwd: string, query: string): string {
-  const notes = retrieveBrain(cwd, query);
+// ---- Semantic retrieval (embeddings + in-process cosine, cached per project) ----
+
+interface Chunk { id: string; note: string; text: string; hash: string; }
+interface EmbedCache { model: string; vectors: Record<string, { hash: string; v: number[] }> }
+
+function hashStr(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+/** Split a note into `##`-heading sections (whole note if it has none). */
+function splitSections(md: string): string[] {
+  const lines = md.split(/\r?\n/);
+  const secs: string[] = [];
+  let cur: string[] = [];
+  for (const l of lines) {
+    if (/^##\s/.test(l) && cur.some((x) => x.trim())) { secs.push(cur.join('\n')); cur = [l]; }
+    else cur.push(l);
+  }
+  if (cur.some((x) => x.trim())) secs.push(cur.join('\n'));
+  return secs.length ? secs : [md];
+}
+function chunkNotes(notes: BrainNote[]): Chunk[] {
+  const chunks: Chunk[] = [];
+  for (const n of notes) {
+    splitSections(n.content).forEach((sec, i) => {
+      const body = sec.trim();
+      if (!body) return;
+      const text = `${n.name}: ${body}`.slice(0, 3000);
+      chunks.push({ id: `${n.name}#${i}`, note: n.name, text, hash: hashStr(text) });
+    });
+  }
+  return chunks;
+}
+
+async function retrieveBrainSemantic(
+  cwd: string,
+  query: string,
+  opts?: { maxNotes?: number; totalChars?: number },
+): Promise<BrainNote[]> {
+  const notes = loadBrain(cwd);
+  if (!notes.length) return [];
+  const chunks = chunkNotes(notes);
+  if (!chunks.length) return [];
+  const model = embeddingModel();
+
+  const cachePath = join(brainDir(cwd), '.embeddings.json');
+  let cache: EmbedCache = { model, vectors: {} };
+  try {
+    const raw = JSON.parse(readFileSync(cachePath, 'utf-8'));
+    if (raw && raw.model === model && raw.vectors) cache = raw;
+  } catch {
+    /* no/invalid cache → rebuild */
+  }
+
+  // Embed any new or changed chunks; prune vanished ones.
+  const need = chunks.filter((c) => cache.vectors[c.id]?.hash !== c.hash);
+  if (need.length) {
+    const vecs = await embedTexts(need.map((c) => c.text));
+    need.forEach((c, i) => { cache.vectors[c.id] = { hash: c.hash, v: vecs[i] }; });
+    const valid = new Set(chunks.map((c) => c.id));
+    for (const id of Object.keys(cache.vectors)) if (!valid.has(id)) delete cache.vectors[id];
+    cache.model = model;
+    try { mkdirSync(brainDir(cwd), { recursive: true }); writeFileSync(cachePath, JSON.stringify(cache)); } catch { /* cache is best-effort */ }
+  }
+
+  const qv = await embedOne(query);
+  const scored = chunks
+    .map((c) => ({ c, score: cosine(qv, cache.vectors[c.id]?.v || []) }))
+    .filter((x) => x.score >= 0.2) // relevance floor (embedding-model dependent; tunable)
+    .sort((a, b) => b.score - a.score);
+
+  const maxNotes = opts?.maxNotes ?? 5;
+  const totalChars = opts?.totalChars ?? 7000;
+  const out: BrainNote[] = [];
+  let total = 0;
+  for (const { c } of scored.slice(0, maxNotes)) {
+    if (total + c.text.length > totalChars) break;
+    total += c.text.length;
+    out.push({ name: c.note, content: c.text, path: '' });
+  }
+  return out;
+}
+
+/**
+ * Retrieve the brain notes most relevant to `query`. Uses semantic (embedding) search when
+ * an embedding model is configured; falls back to keyword retrieval otherwise or on error.
+ */
+export async function retrieveBrain(
+  cwd: string,
+  query: string,
+  opts?: { maxNotes?: number; totalChars?: number },
+): Promise<BrainNote[]> {
+  if (embeddingsEnabled()) {
+    try {
+      const notes = await retrieveBrainSemantic(cwd, query, opts);
+      if (notes.length) return notes;
+    } catch {
+      /* embedding provider failed → keyword fallback */
+    }
+  }
+  return retrieveBrainKeyword(cwd, query, opts);
+}
+
+/** Format retrieved notes into an injectable context block ('' if none). */
+export function formatBrainContext(notes: BrainNote[]): string {
   if (!notes.length) return '';
   return (
     `# Project brain (relevant notes)\n` +
@@ -99,9 +204,9 @@ export function brainContext(cwd: string, query: string): string {
   );
 }
 
-/** Number of notes relevant to a query (for a quick "pulled N notes" log). */
-export function brainHitCount(cwd: string, query: string): number {
-  return retrieveBrain(cwd, query).length;
+/** Formatted brain context for injection, or '' if no relevant notes. */
+export async function brainContext(cwd: string, query: string): Promise<string> {
+  return formatBrainContext(await retrieveBrain(cwd, query));
 }
 
 /** Write/append a note to the vault. Returns the file path. */
