@@ -55,15 +55,29 @@ export function needsUserAction(message: string): boolean {
 }
 
 /**
- * True if an OpenRouter failure is the KEY's fault (rate-limited / out of credit / bad key)
- * rather than the model's — i.e. a different key might succeed. Used to rotate through
- * multiple configured OpenRouter keys before giving up on the model and failing over.
+ * True if an OpenRouter failure is the KEY's/account's fault (rate-limited for the day, out of
+ * credit, bad key) so a DIFFERENT key might succeed. False for upstream/model failures — a
+ * "Provider returned error" (which OpenRouter passes through as a 429), a 403 Forbidden, a
+ * provider 5xx, etc. hit the same broken model on every key, so rotating just wastes a good
+ * key; those must fail over to the next MODEL instead.
  */
 function isKeyExhausted(err: any): boolean {
   const s = err?.status ?? err?.statusCode;
-  if (s === 401 || s === 402 || s === 429) return true;
-  return /rate.?limit|quota|insufficient|add .*credit|payment required|unauthoriz|invalid api key/i.test(
-    err?.message || '',
+  const msg = String(err?.message || '');
+  // Model/provider-level failures — never a key problem, even when dressed up as a 429.
+  if (
+    /provider returned error|stream ended|no instances|provider error|overloaded|temporarily unavailable|internal server error|bad gateway|service unavailable|timed? ?out|forbidden|not found/i.test(
+      msg,
+    )
+  ) {
+    return false;
+  }
+  // Invalid key / out of credit → another key genuinely may work.
+  if (s === 401 || s === 402) return true;
+  // Account/key rate or daily limit (per-key) — the whole reason for multiple keys. A BARE 429
+  // with none of these signals is treated as a provider issue (fail over the model, don't bench).
+  return /free.?models.?per.?day|rate.?limit|requests? per day|too many requests|quota|insufficient|add \d+ credits?|payment required|unauthoriz|invalid api key/i.test(
+    msg,
   );
 }
 
@@ -158,7 +172,7 @@ export async function runAgent(
       if (exhausted) markKeyCooldown(keyList[ki], cooldownUntilFor(err));
       if (!(exhausted && ki < keyList.length - 1)) throw err;
       console.warn(
-        `[openrouter] key ${ki + 1}/${keyList.length} exhausted (${err?.status ?? ''} ${String(err?.message ?? '').slice(0, 80)}); benched, trying next key`,
+        `[openrouter] key ${ki + 1}/${keyList.length} exhausted (${err?.status ?? err?.statusCode ?? ''} ${String(err?.message ?? '').slice(0, 80)}); benched, trying next key`,
       );
     }
   }
