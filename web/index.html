@@ -202,6 +202,7 @@
       </div>
     </header>
     <main>
+      <div id="testStatus" style="display:none; margin:8px 0; padding:8px 12px; border-radius:8px; font-size:13px;"></div>
       <div class="count" id="count"></div>
       <div class="grid" id="grid"></div>
       <div class="state" id="state">Loading models…</div>
@@ -344,6 +345,55 @@
         render();
       }
       const addToChain = (kind, id) => { if (!agents[kind].includes(id)) saveChain(kind, [...agents[kind], id]); };
+
+      // Show a transient status banner above the grid. kind: "" | "good" | "warn".
+      let testStatusTimer = null;
+      function showTestStatus(html, kind) {
+        const el = $("testStatus");
+        el.style.display = "block";
+        el.innerHTML = html;
+        const styles = {
+          good: ["rgba(30,90,60,0.22)", "#2e7d52", "#7fe6a1"],
+          warn: ["rgba(90,45,20,0.22)", "#8a4a2a", "#ff9b6b"],
+          "": ["rgba(40,60,80,0.22)", "#2a4a63", "#9fb3c8"],
+        };
+        const [bg, border, fg] = styles[kind || ""] || styles[""];
+        el.style.background = bg; el.style.border = "1px solid " + border; el.style.color = fg;
+        if (testStatusTimer) clearTimeout(testStatusTimer);
+      }
+      function hideTestStatusLater(ms) {
+        if (testStatusTimer) clearTimeout(testStatusTimer);
+        testStatusTimer = setTimeout(() => { $("testStatus").style.display = "none"; }, ms);
+      }
+      const shortId = (id) => (id || "").length > 48 ? id.slice(0, 45) + "…" : id;
+
+      // Preflight-test a model, then add it on success. On failure, show the error and offer to
+      // add it anyway (a transient error shouldn't hard-block a model the user really wants).
+      async function testAndAdd(kind, id, btn) {
+        if (agents[kind].includes(id)) return;
+        const label = btn ? btn.textContent : "";
+        if (btn) { btn.disabled = true; btn.textContent = "testing…"; }
+        showTestStatus(`⏳ Testing <code>${shortId(id)}</code>… (sending a tiny prompt)`, "");
+        let r;
+        try {
+          r = await (await fetch("/api/models/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: id }) })).json();
+        } catch (e) { r = { ok: false, error: e.message }; }
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+        if (r.ok) {
+          showTestStatus(`✅ <b>${shortId(id)}</b> works${r.latencyMs ? ` (${r.latencyMs} ms)` : ""} — added to ${agentDef().label}.`, "good");
+          hideTestStatusLater(4000);
+          addToChain(kind, id); // re-renders the chain + grid
+        } else {
+          const safe = (r.error || "unknown error").replace(/</g, "&lt;");
+          showTestStatus(
+            `⚠ <b>${shortId(id)}</b> test failed: ${safe} ` +
+              `<button id="addAnyway" class="btn-ghost" style="margin-left:8px;padding:2px 8px;">Add anyway</button>`,
+            "warn",
+          );
+          const anyway = $("addAnyway");
+          if (anyway) anyway.onclick = () => { addToChain(kind, id); showTestStatus(`Added <b>${shortId(id)}</b> (untested).`, ""); hideTestStatusLater(3000); };
+        }
+      }
       const removeFromChain = (kind, id) => saveChain(kind, agents[kind].filter((m) => m !== id));
       function moveInChain(kind, i, dir) {
         const list = [...agents[kind]];
@@ -593,7 +643,7 @@
 
       function wireGridButtons() {
         // onclick (not addEventListener) so re-wiring after appends is idempotent.
-        $("grid").querySelectorAll("button[data-add]").forEach((b) => (b.onclick = () => addToChain(activeTab, b.dataset.add)));
+        $("grid").querySelectorAll("button[data-add]").forEach((b) => (b.onclick = () => testAndAdd(activeTab, b.dataset.add, b)));
         $("grid").querySelectorAll("button[data-rm]").forEach((b) => (b.onclick = () => removeFromChain(activeTab, b.dataset.rm)));
       }
 
@@ -956,7 +1006,7 @@
         let name = $("manualModel").value.trim();
         if (!name) return;
         if (def.prefix && !name.startsWith(def.prefix)) name = def.prefix + name.replace(/^\/+/, "");
-        addToChain(activeTab, name);
+        testAndAdd(activeTab, name, $("addManual"));
         $("manualModel").value = "";
       }
       $("addManual").addEventListener("click", addManualModel);

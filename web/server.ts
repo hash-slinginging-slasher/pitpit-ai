@@ -2,9 +2,9 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync, statSync, watch } from 'fs';
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readApiKeys, keyCooldownUntil, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, removeModelFromChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readApiKeys, keyCooldownUntil, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, removeModelFromChain, modelMissingKey, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
-import { runResilientChain, runAgentChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
+import { runResilientChain, runAgentChain, runAgent, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from '../src/orchestrator.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
 import { loadBrain, saveBrainNote, safeNotePath, BRAIN_DIR, ATTACH_DIR } from '../src/brain.js';
@@ -520,6 +520,33 @@ const server = createServer(async (req, res) => {
     }
 
     // Kanban board: read the project's board.
+    // Model preflight: run a tiny prompt against a model so the user can verify it works
+    // BEFORE adding it to a chain. Returns { ok, latencyMs, reply } or { ok:false, error }.
+    if (req.method === 'POST' && url.pathname === '/api/models/test') {
+      const { model } = await readBody(req);
+      if (!model || typeof model !== 'string') return json(res, 400, { error: 'no model' });
+      if (modelMissingKey(model)) {
+        return json(res, 200, { ok: false, error: 'No API key configured for this provider — add it in Settings.' });
+      }
+      const needsKey = providerOf(model) === 'openrouter';
+      const start = Date.now();
+      try {
+        const cfg = loadConfig({}, { skipApiKey: !needsKey });
+        // Race the call against a timeout so a hung/slow model can't stall the request.
+        const result: any = await Promise.race([
+          runAgent(cfg, model, 'Reply with exactly the single word: ok', {
+            noTools: true,
+            instructions: 'You are a connectivity check. Reply with exactly the single word: ok.',
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timed out after 30s')), 30_000)),
+        ]);
+        const reply = String(result?.text ?? '').trim().slice(0, 60);
+        return json(res, 200, { ok: true, latencyMs: Date.now() - start, reply });
+      } catch (err: any) {
+        return json(res, 200, { ok: false, error: String(err?.message ?? err).slice(0, 240), latencyMs: Date.now() - start });
+      }
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/board') {
       const cwd = url.searchParams.get('cwd') || process.cwd();
       json(res, 200, loadBoard(cwd));
