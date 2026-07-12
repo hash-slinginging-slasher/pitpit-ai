@@ -90,6 +90,41 @@
       .term-instance { position: absolute; inset: 0; padding: 6px 8px; }
       .term-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
       .item .run-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-left: 6px; vertical-align: middle; }
+
+      /* Terminal/Files sub-tabs + controls */
+      .termbar { gap: 8px; }
+      .tspacer { flex: 1; }
+      .subtabs { display: flex; gap: 4px; }
+      .subtab { background: none; border: 1px solid transparent; color: var(--dim); padding: 3px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+      .subtab:hover { color: var(--text); }
+      .subtab.active { background: var(--panel2); color: var(--text); border-color: var(--border); }
+
+      /* File panel */
+      #filesView { display: flex; }
+      .filetree { width: 250px; flex: 0 0 250px; overflow: auto; border-right: 1px solid var(--border); padding: 6px 0; font-size: 13px; background: var(--panel); }
+      .tnode { display: flex; align-items: center; gap: 4px; padding: 3px 8px; cursor: pointer; color: var(--dim); white-space: nowrap; }
+      .tnode:hover { background: var(--panel2); color: var(--text); }
+      .tnode.active { background: var(--panel2); color: var(--accent); }
+      .tnode .tw { width: 12px; display: inline-block; color: var(--muted); flex: 0 0 12px; }
+      .tnode .tn { overflow: hidden; text-overflow: ellipsis; }
+      .tnode.dir .tn { color: var(--text); }
+      .fileeditor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      .editorbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+      .editorbar .epath { color: var(--accent); font-family: ui-monospace, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; }
+      .editorbar button { background: var(--panel2); color: var(--dim); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+      .editorbar button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+      .editorbar button:disabled { opacity: 0.35; cursor: default; }
+      #fileSave:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
+      #fileContent { flex: 1; min-height: 0; background: var(--code); color: var(--text); border: none; outline: none; resize: none; padding: 12px; font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre; overflow: auto; }
+      .histpanel { max-height: 240px; overflow: auto; border-bottom: 1px solid var(--border); background: var(--panel); }
+      .hrow { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; border-bottom: 1px solid var(--border); color: var(--dim); }
+      .hrow .hauthor { flex: 0 0 44px; text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+      .hrow .hauthor.a-agent { color: var(--accent2); }
+      .hrow .hauthor.a-you { color: var(--good); }
+      .hrow .hdate { flex: 0 0 130px; color: var(--muted); }
+      .hrow .hsub { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hrow button { background: var(--panel2); color: var(--dim); border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
+      .hrow button:hover { color: var(--text); border-color: var(--accent); }
     </style>
   </head>
   <body>
@@ -139,12 +174,32 @@
         </aside>
         <div class="termhost">
           <div class="termbar">
-            <span>Terminal:</span> <span class="cwd" id="termCwd">—</span>
-            <button id="termRestart" style="display:none">restart</button>
-            <button id="termClose" style="display:none">close</button>
+            <div class="subtabs">
+              <button id="subTerm" class="subtab active">Terminal</button>
+              <button id="subFiles" class="subtab">Files</button>
+            </div>
+            <span class="cwd" id="termCwd">—</span>
+            <span class="tspacer"></span>
+            <span id="termCtrls"><button id="termRestart" style="display:none">restart</button><button id="termClose" style="display:none">close</button></span>
           </div>
           <div class="term-empty" id="termEmpty">Pick a project (or open a folder) to launch Codigo here. Terminals keep running in the background when you switch projects.</div>
           <div id="termStack" style="display:none; position:relative; flex:1; min-height:0"></div>
+
+          <!-- FILES: live tree + editor + version history -->
+          <div id="filesView" style="display:none; flex:1; min-height:0;">
+            <div id="fileTree" class="filetree"></div>
+            <div class="fileeditor">
+              <div class="editorbar">
+                <span class="epath" id="editPath">no file open</span>
+                <span class="tspacer"></span>
+                <button id="fileSave" disabled>Save</button>
+                <button id="fileHist" disabled>History ▾</button>
+                <button id="fileDelete" disabled>Delete</button>
+              </div>
+              <div id="histPanel" class="histpanel" style="display:none"></div>
+              <textarea id="fileContent" spellcheck="false" placeholder="Select a file from the tree — edits are versioned in git (yours as 'you', the agent's as 'agent')."></textarea>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -322,7 +377,7 @@
             d.className = "item" + (path === activeCwd ? " active" : "");
             d.dataset.path = path;
             d.innerHTML = `${esc(name)}${running} <span class="sub">${esc(path || "")}</span>`;
-            d.onclick = () => openTerminal(path);
+            d.onclick = () => selectProject(path);
             el.appendChild(d);
           };
           if (cw.cwd) addItem(cw.name, cw.cwd);
@@ -389,11 +444,165 @@
         loadProjects();
       }
 
-      $("folderOpen").onclick = () => openTerminal($("folderInput").value.trim());
-      $("folderInput").addEventListener("keydown", (e) => { if (e.key === "Enter") openTerminal($("folderInput").value.trim()); });
+      $("folderOpen").onclick = () => selectProject($("folderInput").value.trim());
+      $("folderInput").addEventListener("keydown", (e) => { if (e.key === "Enter") selectProject($("folderInput").value.trim()); });
       $("termRestart").onclick = () => { if (activeCwd) { const c = activeCwd; closeTerminal(c); openTerminal(c); } };
       $("termClose").onclick = () => activeCwd && closeTerminal(activeCwd);
-      window.addEventListener("resize", () => { if (activeCwd && terminals.has(activeCwd)) fitTerm(terminals.get(activeCwd)); });
+      window.addEventListener("resize", () => { if (mainMode === "terminal" && activeCwd && terminals.has(activeCwd)) fitTerm(terminals.get(activeCwd)); });
+
+      // ---------- Terminal | Files sub-tabs + file panel ----------
+      let mainMode = "terminal";      // 'terminal' | 'files'
+      let filesCwd = null, filesWs = null, openFilePath = null, treeData = [];
+      const expanded = new Set();
+
+      // Picking a project: browse its files (Files mode) or open its terminal (Terminal mode).
+      function selectProject(cwd) {
+        if (!cwd) return;
+        activeCwd = cwd; highlightActive();
+        if (mainMode === "files") { filesCwd = cwd; loadTree(); connectFilesWs(); applyMainMode(); }
+        else openTerminal(cwd);
+      }
+
+      function applyMainMode() {
+        $("subTerm").classList.toggle("active", mainMode === "terminal");
+        $("subFiles").classList.toggle("active", mainMode === "files");
+        const filesOn = mainMode === "files";
+        $("filesView").style.display = filesOn ? "flex" : "none";
+        $("termCtrls").style.display = filesOn ? "none" : "";
+        const hasTerm = activeCwd && terminals.has(activeCwd);
+        $("termStack").style.display = !filesOn && hasTerm ? "block" : "none";
+        $("termEmpty").style.display = !filesOn && !hasTerm ? "flex" : "none";
+        if (filesOn) { if (!filesCwd) filesCwd = activeCwd; loadTree(); connectFilesWs(); }
+        else if (hasTerm) setTimeout(() => fitTerm(terminals.get(activeCwd)), 50);
+      }
+      $("subTerm").onclick = () => { mainMode = "terminal"; applyMainMode(); };
+      $("subFiles").onclick = () => { mainMode = "files"; applyMainMode(); };
+
+      async function loadTree() {
+        let cwd = filesCwd || activeCwd;
+        if (!cwd) { try { cwd = (await (await fetch("/api/cwd")).json()).cwd; } catch (e) {} }
+        if (!cwd) return;
+        filesCwd = cwd;
+        $("termCwd").textContent = cwd;
+        try {
+          const r = await (await fetch("/api/files?cwd=" + encodeURIComponent(cwd))).json();
+          treeData = r.tree || [];
+          renderTree();
+        } catch (e) {}
+      }
+      function renderTree() {
+        const el = $("fileTree"); el.innerHTML = "";
+        el.appendChild(renderNodes(treeData, 0));
+      }
+      function renderNodes(nodes, depth) {
+        const frag = document.createDocumentFragment();
+        for (const n of nodes) {
+          const row = document.createElement("div");
+          row.className = "tnode" + (n.type === "dir" ? " dir" : "") + (n.type === "file" && n.path === openFilePath ? " active" : "");
+          row.style.paddingLeft = 6 + depth * 12 + "px";
+          if (n.type === "dir") {
+            const isOpen = expanded.has(n.path);
+            row.innerHTML = `<span class="tw">${isOpen ? "▾" : "▸"}</span><span class="tn">${esc(n.name)}</span>`;
+            row.onclick = () => { expanded.has(n.path) ? expanded.delete(n.path) : expanded.add(n.path); renderTree(); };
+            frag.appendChild(row);
+            if (isOpen && n.children && n.children.length) frag.appendChild(renderNodes(n.children, depth + 1));
+          } else {
+            row.innerHTML = `<span class="tw"></span><span class="tn">${esc(n.name)}</span>`;
+            row.onclick = () => openFile(n.path);
+            frag.appendChild(row);
+          }
+        }
+        return frag;
+      }
+
+      async function openFile(path) {
+        openFilePath = path;
+        $("histPanel").style.display = "none";
+        try {
+          const r = await (await fetch("/api/file?cwd=" + encodeURIComponent(filesCwd) + "&path=" + encodeURIComponent(path))).json();
+          const ta = $("fileContent");
+          if (r.tooLarge) { ta.value = `(file too large to edit — ${r.size} bytes)`; ta.disabled = true; }
+          else if (r.binary) { ta.value = "(binary file)"; ta.disabled = true; }
+          else { ta.value = r.content ?? ""; ta.disabled = false; }
+          $("editPath").textContent = path + (r.dirty ? "  •unsaved-in-git" : "");
+          $("fileSave").disabled = ta.disabled;
+          $("fileDelete").disabled = false;
+          $("fileHist").disabled = false;
+        } catch (e) {}
+        renderTree();
+      }
+
+      $("fileSave").onclick = async () => {
+        if (!openFilePath) return;
+        try {
+          await fetch("/api/file", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cwd: filesCwd, path: openFilePath, content: $("fileContent").value }) });
+          $("editPath").textContent = openFilePath + "  ✓ saved";
+          setTimeout(() => { if (openFilePath) $("editPath").textContent = openFilePath; }, 1500);
+        } catch (e) {}
+      };
+
+      $("fileDelete").onclick = async () => {
+        if (!openFilePath || !confirm("Delete " + openFilePath + "?")) return;
+        try {
+          await fetch("/api/file/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cwd: filesCwd, path: openFilePath }) });
+          openFilePath = null; $("fileContent").value = ""; $("editPath").textContent = "no file open";
+          $("fileSave").disabled = $("fileDelete").disabled = $("fileHist").disabled = true;
+          loadTree();
+        } catch (e) {}
+      };
+
+      $("fileHist").onclick = async () => {
+        const panel = $("histPanel");
+        if (panel.style.display === "block") { panel.style.display = "none"; return; }
+        try {
+          const r = await (await fetch("/api/file/history?cwd=" + encodeURIComponent(filesCwd) + "&path=" + encodeURIComponent(openFilePath))).json();
+          const versions = r.versions || [];
+          panel.innerHTML = versions.length
+            ? versions.map((v) => `<div class="hrow"><span class="hauthor ${v.author === "agent" ? "a-agent" : v.author === "you" ? "a-you" : ""}">${esc(v.author)}</span><span class="hdate">${new Date(v.date).toLocaleString()}</span><span class="hsub">${esc(v.subject)}</span><button data-view="${v.hash}">view</button><button data-restore="${v.hash}">restore</button></div>`).join("")
+            : `<div class="hrow">No versions yet${r.noGit ? " (not a git repo)" : ""}.</div>`;
+          panel.querySelectorAll("[data-view]").forEach((b) => (b.onclick = () => viewVersion(b.dataset.view)));
+          panel.querySelectorAll("[data-restore]").forEach((b) => (b.onclick = () => restoreVersion(b.dataset.restore)));
+          panel.style.display = "block";
+        } catch (e) {}
+      };
+      async function viewVersion(hash) {
+        try {
+          const r = await (await fetch("/api/file/version?cwd=" + encodeURIComponent(filesCwd) + "&path=" + encodeURIComponent(openFilePath) + "&hash=" + hash)).json();
+          $("fileContent").value = r.content ?? r.error ?? "";
+          $("fileContent").disabled = true;
+          $("fileSave").disabled = true;
+          $("editPath").textContent = openFilePath + " @ " + hash.slice(0, 7) + " (read-only — restore to edit)";
+        } catch (e) {}
+      }
+      async function restoreVersion(hash) {
+        if (!confirm("Restore " + openFilePath + " to " + hash.slice(0, 7) + "? This writes a new version.")) return;
+        try {
+          await fetch("/api/file/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cwd: filesCwd, path: openFilePath, hash }) });
+          $("histPanel").style.display = "none";
+          openFile(openFilePath);
+          loadTree();
+        } catch (e) {}
+      }
+
+      // Live tree: watch the active project; refresh on change; reload the open file if it
+      // changed on disk (unless you're actively typing in it).
+      function connectFilesWs() {
+        const cwd = filesCwd || activeCwd;
+        if (!cwd) return;
+        if (filesWs && filesWs._cwd === cwd && filesWs.readyState <= 1) return;
+        if (filesWs) { try { filesWs.close(); } catch (e) {} }
+        const proto = location.protocol === "https:" ? "wss" : "ws";
+        const ws = new WebSocket(`${proto}://${location.host}/ws/files?cwd=${encodeURIComponent(cwd)}`);
+        ws._cwd = cwd;
+        ws.onmessage = (ev) => {
+          let m; try { m = JSON.parse(ev.data); } catch { return; }
+          if (m.type === "change") {
+            loadTree();
+            if (openFilePath && (m.paths || []).includes(openFilePath) && document.activeElement !== $("fileContent") && !$("fileContent").disabled) openFile(openFilePath);
+          }
+        };
+        filesWs = ws;
+      }
 
       // ---------- input UX ----------
       const input = $("input");

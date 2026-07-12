@@ -6,7 +6,7 @@ import { runAgentChain, runResilientChain, isAbortError, type ChatMessage, type 
 import { runOrchestrated } from './orchestrator.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
-import { hasGit, isRepo, initRepo, commitAll, recentCommits } from './git.js';
+import { hasGit, isRepo, initRepo, commitAll, recentCommits, AGENT_AUTHOR } from './git.js';
 import { resolveMentions, mentionCompletions } from './mentions.js';
 import { loadSkillsFor, skillIndex } from './skills.js';
 
@@ -871,7 +871,7 @@ async function main() {
       // Auto-commit any file changes this turn made, tagged with the request.
       if (autoCommit && gitEnabled && mutated.size) {
         const subject = (isInit ? `init: ${CONTEXT_FILE}` : input).split('\n')[0].slice(0, 72);
-        const c = await commitAll(workDir, subject);
+        const c = await commitAll(workDir, subject, undefined, AGENT_AUTHOR);
         if (c.committed) {
           await refreshRecentChanges();
           rebuildSystemPrompt();

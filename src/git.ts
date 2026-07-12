@@ -15,6 +15,10 @@ const FALLBACK_IDENTITY = [
   '-c', 'user.email=coder@localhost',
 ];
 
+/** Commit authors used to distinguish who made a change (shown in file history). */
+export const AGENT_AUTHOR = { name: 'Codigo (agent)', email: 'agent@codigo.local' };
+export const USER_AUTHOR = { name: 'Codigo (you)', email: 'you@codigo.local' };
+
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', args, {
     cwd,
@@ -79,7 +83,12 @@ export interface CommitResult {
  * No-op (committed:false) when there is nothing to commit. Uses a fallback
  * identity so it never fails on an unconfigured git.
  */
-export async function commitAll(dir: string, subject: string, body?: string): Promise<CommitResult> {
+export async function commitAll(
+  dir: string,
+  subject: string,
+  body?: string,
+  author?: { name: string; email: string },
+): Promise<CommitResult> {
   try {
     await git(dir, ['add', '-A']);
     // What actually got staged? (name-status doubles as the commit body.)
@@ -89,12 +98,62 @@ export async function commitAll(dir: string, subject: string, body?: string): Pr
 
     // Default the body to the list of changed files if the caller didn't supply one.
     const finalBody = body ?? nameStatus;
-    await git(dir, [...FALLBACK_IDENTITY, 'commit', '-m', subject, '-m', finalBody]);
+    const identity = author ? ['-c', `user.name=${author.name}`, '-c', `user.email=${author.email}`] : FALLBACK_IDENTITY;
+    await git(dir, [...identity, 'commit', '-m', subject, '-m', finalBody]);
 
     const hash = (await git(dir, ['rev-parse', '--short', 'HEAD'])).trim();
     return { committed: true, hash, files };
   } catch (err: any) {
     return { committed: false, reason: err?.message ?? String(err) };
+  }
+}
+
+export interface FileVersion {
+  hash: string;
+  author: string; // 'agent' | 'you' | raw author name
+  date: string; // ISO
+  subject: string;
+}
+
+/** Map a commit author name to a short label for the UI. */
+function authorLabel(name: string): string {
+  if (name === AGENT_AUTHOR.name) return 'agent';
+  if (name === USER_AUTHOR.name) return 'you';
+  return name;
+}
+
+/** Version history (commits that touched `relPath`), newest first. `relPath` is repo-relative. */
+export async function fileHistory(dir: string, relPath: string, n = 60): Promise<FileVersion[]> {
+  try {
+    const out = await git(dir, [
+      'log', `-n${n}`, '--follow', '--format=%H%x1f%an%x1f%aI%x1f%s', '--', relPath,
+    ]);
+    return out
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        const [hash, author, date, subject] = l.split('\x1f');
+        return { hash, author: authorLabel(author ?? ''), date: date ?? '', subject: subject ?? '' };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** Contents of `relPath` at commit `hash`. Throws if the path didn't exist there. */
+export async function showFileAt(dir: string, relPath: string, hash: string): Promise<string> {
+  // Forward slashes for the git pathspec even on Windows.
+  return git(dir, ['show', `${hash}:${relPath.replace(/\\/g, '/')}`]);
+}
+
+/** True if the working file differs from HEAD (uncommitted local changes). */
+export async function fileDirty(dir: string, relPath: string): Promise<boolean> {
+  try {
+    const out = await git(dir, ['status', '--porcelain', '--', relPath]);
+    return out.trim().length > 0;
+  } catch {
+    return false;
   }
 }
 
