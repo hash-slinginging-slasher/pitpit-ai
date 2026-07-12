@@ -489,20 +489,24 @@
       // cli/opencode/<model> without needing the manual add-by-id box.
       async function appendOpencodeModels() {
         const oc = cliStatus.find((c) => c.name === "opencode");
-        if (!oc || !oc.installed) return;
-        try {
-          const models = (await (await fetch("/api/models/opencode")).json()).models || [];
-          if (!models.length || source !== "cli") return;
-          const q = $("search").value.trim().toLowerCase();
-          const list = models.filter((m) => !q || (m.id + " " + (m.name || "")).toLowerCase().includes(q));
-          const cards = list.map((m) => {
+        if (!oc || !oc.installed || source !== "cli") return;
+        let models = [], err = null;
+        try { const r = await (await fetch("/api/models/opencode")).json(); models = r.models || []; err = r.error; } catch (e) { err = e.message; }
+        if (source !== "cli") return; // user switched away while fetching
+        const q = $("search").value.trim().toLowerCase();
+        const list = models.filter((m) => !q || (m.id + " " + (m.name || "")).toLowerCase().includes(q));
+        let html = `<div style="grid-column:1/-1; color:var(--dim); font-size:13px; margin:12px 0 2px;">↓ OpenCode models — free coding models, route via <code>cli/opencode</code>:</div>`;
+        if (!list.length) {
+          html += `<div style="grid-column:1/-1; color:var(--muted); font-size:12px;">${err ? "couldn't list OpenCode models: " + err : "none found (run `opencode models` to check)."}</div>`;
+        } else {
+          html += list.map((m) => {
             const pos = agents[activeTab].indexOf(m.id);
             const inChain = pos !== -1;
             return `<div class="card ${inChain ? "inchain" : ""}"><div class="name">${m.name || m.id}</div><div class="id">${m.id}</div><div class="meta"><span class="tag-free">FREE</span></div><div class="spacer"></div>${inChain ? `<button class="add inchain" data-rm="${m.id}" style="width:100%;margin-top:0;">✓ ${activeTab} #${pos + 1} — remove</button>` : `<button class="add" data-add="${m.id}" style="width:100%;margin-top:0;">+ Add to ${agentDef().label}</button>`}</div>`;
           }).join("");
-          $("grid").insertAdjacentHTML("beforeend", `<div style="grid-column:1/-1; color:var(--dim); font-size:13px; margin:10px 0 2px;">OpenCode models — free coding models, route via <code>cli/opencode</code></div>${cards}`);
-          wireGridButtons();
-        } catch (e) {}
+        }
+        $("grid").insertAdjacentHTML("beforeend", html);
+        wireGridButtons();
       }
 
       async function loginCli(name, btn) {
