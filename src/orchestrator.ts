@@ -134,7 +134,7 @@ export async function runOrchestrated(
     // planning failed → fall through to a single-step plan (still resilient on coders)
   }
   const ledger: LedgerStep[] = (plan ?? [task]).map((title) => ({ title, status: 'pending' }));
-  emit({ type: 'plan', steps: ledger.map((s) => s.title), orchestrator: shortName(orchestratorChain[0] ?? '') });
+  emit({ type: 'plan', steps: ledger.map((s) => s.title), orchestrator: orchestratorChain[0] ?? '' });
 
   // Scrum master: put each planned step on the Kanban board as a To Do card.
   const boardCwd = process.cwd();

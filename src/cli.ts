@@ -108,8 +108,11 @@ function readCoderChain(): string[] {
 /** Short label for the prompt, e.g. "qwen/qwen3-coder" → "qwen3-coder". */
 function shortName(model: string): string {
   if (!model) return '(no model)';
-  const slash = model.lastIndexOf('/');
-  return (slash === -1 ? model : model.slice(slash + 1)).replace(/:free$/, ' (free)');
+  const m = model.replace(/\/+$/, ''); // tolerate trailing slashes (e.g. local URL ids)
+  const local = m.match(/^local\/https?:\/\/(.+)$/i);
+  if (local) return `local (${local[1]})`; // local/http://127.0.0.1:8080 → "local (127.0.0.1:8080)"
+  const slash = m.lastIndexOf('/');
+  return (slash === -1 ? m : m.slice(slash + 1)).replace(/:free$/, ' (free)') || m;
 }
 
 function banner(config: AgentConfig, chain: string[], activeIndex = 0) {
@@ -126,6 +129,12 @@ function banner(config: AgentConfig, chain: string[], activeIndex = 0) {
     });
   } else {
     console.log(`  ${C.yellow}no coder model configured - add one in the web UI (start.bat)${C.reset}`);
+  }
+  // Show the orchestrator (if configured) so you know which one plans/delegates.
+  const orch = readAgents().orchestrator;
+  if (orch.length) {
+    const rest = orch.length > 1 ? ` ${C.dim}+${orch.length - 1} failover${C.reset}` : '';
+    console.log(`  ${C.magenta}▣ orchestrator${C.reset}  ${C.magenta}${shortName(orch[0])}${C.reset}${rest}`);
   }
   console.log(line);
   console.log(`  ${C.dim}Models are set from the web UI. /coder-<n> to switch, /help, /exit.${C.reset}`);

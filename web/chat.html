@@ -384,7 +384,12 @@
       }
 
       // ---------- model indicator ----------
-      const short = (m) => (m || "").split("/").pop().replace(/:free$/, " (free)");
+      const short = (m) => {
+        const s = (m || "").replace(/\/+$/, "");
+        const local = s.match(/^local\/https?:\/\/(.+)$/i);
+        if (local) return "local (" + local[1] + ")";
+        return (s.split("/").pop() || s).replace(/:free$/, " (free)");
+      };
       async function loadModel() {
         try {
           const a = await (await fetch("/api/agents")).json();
