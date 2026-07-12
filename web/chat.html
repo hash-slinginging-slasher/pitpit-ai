@@ -87,8 +87,9 @@
       .termbar .cwd { color: var(--accent); font-family: ui-monospace, Consolas, monospace; }
       .termbar button { margin-left: auto; background: var(--panel2); color: var(--dim); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
       .termbar button:hover { color: var(--text); border-color: var(--accent); }
-      #term { flex: 1; min-height: 0; padding: 6px 8px; }
+      .term-instance { position: absolute; inset: 0; padding: 6px 8px; }
       .term-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
+      .item .run-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-left: 6px; vertical-align: middle; }
     </style>
   </head>
   <body>
@@ -140,9 +141,10 @@
           <div class="termbar">
             <span>Terminal:</span> <span class="cwd" id="termCwd">—</span>
             <button id="termRestart" style="display:none">restart</button>
+            <button id="termClose" style="display:none">close</button>
           </div>
-          <div class="term-empty" id="termEmpty">Pick a project (or open a folder) to launch Codigo here.</div>
-          <div id="term" style="display:none"></div>
+          <div class="term-empty" id="termEmpty">Pick a project (or open a folder) to launch Codigo here. Terminals keep running in the background when you switch projects.</div>
+          <div id="termStack" style="display:none; position:relative; flex:1; min-height:0"></div>
         </div>
       </div>
 
@@ -164,7 +166,7 @@
         document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
         $("view-" + name).classList.remove("hidden");
         document.querySelectorAll(".tabbtn").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
-        if (name === "projects") { loadProjects(); if (curTerm) setTimeout(fitTerm, 60); }
+        if (name === "projects") { loadProjects(); if (activeCwd && terminals.has(activeCwd)) setTimeout(() => fitTerm(terminals.get(activeCwd)), 60); }
         if (name === "settings") { const f = $("settingsFrame"); if (f.src === "about:blank" || !f.src) f.src = "/"; }
         if (name === "chat") loadModel(); // reflect any model changes made in settings
       }
@@ -300,8 +302,12 @@
         }
       }
 
-      // ---------- Projects tab + terminal ----------
-      let curTerm = null, curFit = null, curWs = null, curCwd = null, projectsLoaded = false;
+      // ---------- Projects tab + persistent per-project terminals ----------
+      // Each project keeps its OWN long-lived terminal (PTY + xterm). Switching projects
+      // just shows/hides them — the hidden ones keep running in the background.
+      const terminals = new Map(); // cwd -> { term, fit, ws, el }
+      let activeCwd = null;
+
       async function loadProjects() {
         try {
           const [pj, cw] = await Promise.all([
@@ -310,51 +316,84 @@
           ]);
           if (cw.cwd && !$("folderInput").value) $("folderInput").value = cw.cwd;
           const el = $("projects"); el.innerHTML = "";
-          // current server dir first
-          if (cw.cwd) {
+          const addItem = (name, path) => {
             const d = document.createElement("div");
-            d.className = "item"; d.innerHTML = `${esc(cw.name)} <span class="sub">${esc(cw.cwd)}</span>`;
-            d.onclick = () => openTerminal(cw.cwd); el.appendChild(d);
-          }
-          for (const p of pj.projects || []) {
-            if (p.path === cw.cwd) continue;
-            const d = document.createElement("div");
-            d.className = "item"; d.innerHTML = `${esc(p.name)} <span class="sub">${esc(p.path || "")}</span>`;
-            d.onclick = () => openTerminal(p.path); el.appendChild(d);
+            const running = terminals.has(path) ? '<span class="run-dot" title="running"></span>' : "";
+            d.className = "item" + (path === activeCwd ? " active" : "");
+            d.dataset.path = path;
+            d.innerHTML = `${esc(name)}${running} <span class="sub">${esc(path || "")}</span>`;
+            d.onclick = () => openTerminal(path);
+            el.appendChild(d);
+          };
+          if (cw.cwd) addItem(cw.name, cw.cwd);
+          for (const p of pj.projects || []) { if (p.path !== cw.cwd) addItem(p.name, p.path); }
+          // also list any open terminal whose folder isn't in the DB projects (opened manually)
+          for (const cwd of terminals.keys()) {
+            if (![...el.children].some((c) => c.dataset.path === cwd)) addItem(cwd.split(/[\\/]/).pop() || cwd, cwd);
           }
           if (!el.children.length) el.innerHTML = `<div class="item" style="cursor:default">No projects yet.</div>`;
-          projectsLoaded = true;
         } catch (e) {}
       }
-      function fitTerm() { try { curFit && curFit.fit(); if (curWs && curWs.readyState === 1) curWs.send(JSON.stringify({ t: "resize", cols: curTerm.cols, rows: curTerm.rows })); } catch (e) {} }
+
+      function fitTerm(t) { try { t.fit.fit(); if (t.ws.readyState === 1) t.ws.send(JSON.stringify({ t: "resize", cols: t.term.cols, rows: t.term.rows })); } catch (e) {} }
+
+      function highlightActive() {
+        document.querySelectorAll("#projects .item").forEach((it) => it.classList.toggle("active", it.dataset.path === activeCwd));
+      }
+
       function openTerminal(cwd) {
         if (!cwd) return;
-        curCwd = cwd; $("termCwd").textContent = cwd; $("termRestart").style.display = "";
-        $("termEmpty").style.display = "none"; $("term").style.display = "block";
-        // tear down any existing
-        if (curWs) { try { curWs.close(); } catch (e) {} }
-        if (curTerm) { try { curTerm.dispose(); } catch (e) {} }
-        $("term").innerHTML = "";
+        activeCwd = cwd;
+        $("termEmpty").style.display = "none";
+        $("termStack").style.display = "block";
+        $("termCwd").textContent = cwd;
+        $("termRestart").style.display = ""; $("termClose").style.display = "";
+        // show only the active terminal; others keep running hidden
+        terminals.forEach((t, k) => { t.el.style.display = k === cwd ? "block" : "none"; });
+        highlightActive();
+
+        if (terminals.has(cwd)) { setTimeout(() => fitTerm(terminals.get(cwd)), 50); return; }
+
+        // spin up a new persistent terminal for this project
+        const el = document.createElement("div");
+        el.className = "term-instance";
+        $("termStack").appendChild(el);
         const FitCtor = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
-        curTerm = new window.Terminal({ fontSize: 13, fontFamily: "Consolas, ui-monospace, monospace", cursorBlink: true, theme: { background: "#161616", foreground: "#e8e8e8" } });
-        curFit = new FitCtor();
-        curTerm.loadAddon(curFit);
-        curTerm.open($("term"));
-        curFit.fit();
+        const term = new window.Terminal({ fontSize: 13, fontFamily: "Consolas, ui-monospace, monospace", cursorBlink: true, theme: { background: "#161616", foreground: "#e8e8e8" } });
+        const fit = new FitCtor();
+        term.loadAddon(fit); term.open(el); fit.fit();
         const proto = location.protocol === "https:" ? "wss" : "ws";
         const ws = new WebSocket(`${proto}://${location.host}/ws/term?cwd=${encodeURIComponent(cwd)}`);
-        curWs = ws;
-        ws.onmessage = (ev) => curTerm.write(typeof ev.data === "string" ? ev.data : new Uint8Array(ev.data));
-        ws.onopen = () => setTimeout(fitTerm, 80);
-        ws.onclose = () => curTerm && curTerm.write("\r\n\x1b[90m[session ended]\x1b[0m\r\n");
-        curTerm.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: "in", d })); });
-        // highlight the active project item
-        document.querySelectorAll("#projects .item").forEach((it) => it.classList.toggle("active", it.querySelector(".sub") && it.querySelector(".sub").textContent === cwd));
+        const rec = { term, fit, ws, el };
+        ws.onmessage = (ev) => term.write(typeof ev.data === "string" ? ev.data : new Uint8Array(ev.data));
+        ws.onopen = () => setTimeout(() => fitTerm(rec), 80);
+        ws.onclose = () => term.write("\r\n\x1b[90m[session ended — press restart]\x1b[0m\r\n");
+        term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: "in", d })); });
+        terminals.set(cwd, rec);
+        loadProjects(); // refresh running-dots
       }
+
+      function closeTerminal(cwd) {
+        const t = terminals.get(cwd);
+        if (!t) return;
+        try { t.ws.close(); } catch (e) {}
+        try { t.term.dispose(); } catch (e) {}
+        t.el.remove();
+        terminals.delete(cwd);
+        if (activeCwd === cwd) {
+          activeCwd = null;
+          const next = terminals.keys().next().value;
+          if (next) openTerminal(next);
+          else { $("termStack").style.display = "none"; $("termEmpty").style.display = "flex"; $("termCwd").textContent = "—"; $("termRestart").style.display = "none"; $("termClose").style.display = "none"; }
+        }
+        loadProjects();
+      }
+
       $("folderOpen").onclick = () => openTerminal($("folderInput").value.trim());
       $("folderInput").addEventListener("keydown", (e) => { if (e.key === "Enter") openTerminal($("folderInput").value.trim()); });
-      $("termRestart").onclick = () => curCwd && openTerminal(curCwd);
-      window.addEventListener("resize", () => { if (curTerm) fitTerm(); });
+      $("termRestart").onclick = () => { if (activeCwd) { const c = activeCwd; closeTerminal(c); openTerminal(c); } };
+      $("termClose").onclick = () => activeCwd && closeTerminal(activeCwd);
+      window.addEventListener("resize", () => { if (activeCwd && terminals.has(activeCwd)) fitTerm(terminals.get(activeCwd)); });
 
       // ---------- input UX ----------
       const input = $("input");
