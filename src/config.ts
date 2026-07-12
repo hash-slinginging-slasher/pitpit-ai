@@ -398,6 +398,20 @@ export function readAgents(): AgentChains {
   return { orchestrator: [], coder: [], image: [], doc: [] };
 }
 
+/**
+ * Move a model to the BOTTOM of its chain (persisted). Used to deprioritize a coder that
+ * just failed / hit a rate limit, so the next task starts with a working model and we don't
+ * keep hitting the dead one until the chain cycles back. No-op if it's missing or already last.
+ */
+export function demoteModelInChain(kind: AgentKind, model: string): string[] {
+  const chain = readAgents()[kind];
+  const idx = chain.indexOf(model);
+  if (idx === -1 || idx === chain.length - 1) return chain;
+  const reordered = [...chain.slice(0, idx), ...chain.slice(idx + 1), model];
+  saveAgentChain(kind, reordered);
+  return reordered;
+}
+
 /** Persist one agent's ordered model chain to the config file, preserving other fields. */
 export function saveAgentChain(kind: AgentKind, models: string[]): AgentChains {
   let file: any = {};

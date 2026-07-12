@@ -1,8 +1,8 @@
 import { createInterface, emitKeypressEvents, type Interface } from 'readline';
 import { watch, readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
-import { loadConfig, readAgents, updateConfigFile, providerOf, CONFIG_PATH, type AgentConfig } from './config.js';
-import { runAgentChain, runResilientChain, isAbortError, type ChatMessage, type AgentEvent } from './agent.js';
+import { loadConfig, readAgents, updateConfigFile, providerOf, demoteModelInChain, CONFIG_PATH, type AgentConfig } from './config.js';
+import { runAgentChain, runResilientChain, isAbortError, needsUserAction, type ChatMessage, type AgentEvent } from './agent.js';
 import { runOrchestrated } from './orchestrator.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
@@ -79,6 +79,7 @@ const C = {
   yellow: '\x1b[33m', // warnings, errors
   gray: '\x1b[90m', // muted — tool output, thinking
   magenta: '\x1b[35m', // tool-call marker
+  red: '\x1b[91m', // action-required (fixed; not themed)
 };
 
 /** Named color themes: each maps the five accent slots. */
@@ -839,12 +840,17 @@ async function main() {
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
           renderer.handle(e);
         },
-        onFailover: ({ to, index, error }: { to: string; index: number; error: string }) =>
+        onFailover: ({ from, to, index, error }: { from: string; to: string; index: number; error: string }) => {
+          const why = needsUserAction(error) ? 'rate-limited/needs action' : 'failed';
+          // index is the source's 1-based position in the active sub-chain; offset by
+          // activeIndex for the absolute coder number.
           console.log(
-            // index is the source's 1-based position in the active sub-chain; offset it
-            // by activeIndex to show the absolute coder number.
-            `\n${C.yellow}  ! coder ${activeIndex + index} failing over -> ${shortName(to)}${C.reset} ${C.dim}(${error})${C.reset}`,
-          ),
+            `\n${C.yellow}  ! coder ${activeIndex + index} ${shortName(from)} ${why} — ${useOrchestrator ? 'orchestrator ' : ''}reassigning to coder ${activeIndex + index + 1} ${shortName(to)}${C.reset} ${C.dim}(${error})${C.reset}`,
+          );
+          // Deprioritize the failed coder so the next task skips it until the chain cycles back.
+          demoteModelInChain('coder', from);
+          console.log(`  ${C.dim}↓ moved ${shortName(from)} to the bottom of the coder list${C.reset}`);
+        },
         onContinue: ({ model, reason }: { model: string; reason: 'step-cap' | 'handoff' }) => {
           if (reason === 'step-cap')
             console.log(`\n${C.dim}  … ${shortName(model)} hit the step cap — continuing the task (not done yet)${C.reset}`);
@@ -897,8 +903,10 @@ async function main() {
           messages.push({ role: 'assistant', content: '[stopped by user]' });
           await log('assistant', '[stopped by user]');
         }
+      } else if (needsUserAction(err.message)) {
+        console.log(`\n${C.red}  ⚠ Action needed: ${err.message}${C.reset}\n`);
       } else {
-        console.log(`\n${C.yellow}  All coder models failed: ${err.message}${C.reset}\n`);
+        console.log(`\n${C.red}  ✗ All coders failed: ${err.message}${C.reset}\n`);
       }
     } finally {
       turnActive = false;

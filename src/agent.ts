@@ -40,6 +40,16 @@ export function isAbortError(err: any, signal?: AbortSignal): boolean {
   return !!signal?.aborted || err?.name === 'AbortError' || err?.code === 'ABORT_ERR';
 }
 
+/**
+ * True if a failure message means the USER must do something to proceed (add credits, a key,
+ * a token, wait out a quota, sign in). Used to surface such messages in red.
+ */
+export function needsUserAction(message: string): boolean {
+  return /rate.?limit|add .*credit|api key|no .*key|quota|insufficient|unauthoriz|payment|sign in|log ?in|402|401|429/i.test(
+    message || '',
+  );
+}
+
 export async function runAgent(
   config: AgentConfig,
   model: string,

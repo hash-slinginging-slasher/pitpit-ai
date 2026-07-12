@@ -63,6 +63,7 @@
       .evt { font-size: 12px; color: var(--muted); padding: 2px 0; font-family: ui-monospace, Consolas, monospace; }
       .evt .tool { color: var(--accent2); }
       .evt.failover { color: var(--warn); }
+      .evt.action { color: #ff5555; font-weight: 600; }
       .chip { display: inline-block; font-size: 12px; color: var(--dim); background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 2px 10px; margin: 2px 4px 2px 0; }
       .thinking { color: var(--muted); font-style: italic; }
       .usage { color: var(--muted); font-size: 12px; margin-top: 4px; }
@@ -337,7 +338,12 @@
           case "reasoning": break;
           case "tool_call": events.innerHTML += `<div class="evt"><span class="tool">▸ ${esc(e.name)}</span> ${esc(JSON.stringify(e.args || {}).slice(0, 120))}</div>`; scrollDown(); break;
           case "tool_result": events.innerHTML += `<div class="evt">&nbsp;&nbsp;→ ${esc((e.output || "").slice(0, 160))}</div>`; break;
-          case "failover": events.innerHTML += `<div class="evt failover">! failing over → ${esc(e.to)} (${esc(e.error || "")})</div>`; break;
+          case "failover": {
+            const why = e.action ? "rate-limited/needs action" : "failed";
+            events.innerHTML += `<div class="evt failover">! coder ${e.index} ${esc(short(e.from || ""))} ${why} — ${e.orchestrated ? "orchestrator " : ""}reassigning to coder ${e.index + 1} ${esc(short(e.to))}</div>`;
+            scrollDown(); break;
+          }
+          case "demote": events.innerHTML += `<div class="evt">↓ moved ${esc(short(e.model))} to the bottom of the coder list</div>`; scrollDown(); break;
           case "continue": if (e.reason === "step-cap") events.innerHTML += `<div class="evt">… ${esc(short(e.model))} hit the step cap — continuing (task not done yet)</div>`; scrollDown(); break;
           case "plan": {
             const items = e.steps.map((s, i) => `<div class="evt">${i + 1}. ${esc(s)}</div>`).join("");
@@ -353,7 +359,7 @@
           case "session": sessionId = e.sessionId; loadRecents(); break;
           case "done": { const u = e.usage || {}; const via = e.failedOver ? `via ${short(e.model)} · ` : ""; usageEl.textContent = `${via}${u.inputTokens ?? 0} in · ${u.outputTokens ?? 0} out`; if (e.sessionId) sessionId = e.sessionId; if (e.text) ctx.setText(e.text); break; }
           case "stopped": events.innerHTML += `<div class="evt failover">stopped</div>`; break;
-          case "error": events.innerHTML += `<div class="evt failover">error: ${esc(e.message)}</div>`; break;
+          case "error": events.innerHTML += `<div class="evt ${e.action ? "action" : "failover"}">${e.action ? "⚠ Action needed: " : "error: "}${esc(e.message)}</div>`; scrollDown(); break;
         }
       }
 

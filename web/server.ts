@@ -2,9 +2,9 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync, statSync, watch } from 'fs';
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
-import { runResilientChain, isAbortError, type ChatMessage } from '../src/agent.js';
+import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { runOrchestrated } from '../src/orchestrator.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
 import { loadSkillsFor, skillIndex } from '../src/skills.js';
@@ -617,14 +617,18 @@ const server = createServer(async (req, res) => {
           }
         }
 
+        // If an orchestrator model is configured, it plans + delegates; else run coders directly.
+        const orchestratorChain = readAgents().orchestrator;
         const handlers = {
           signal: ac.signal,
           onEvent: (e: any) => send(e),
-          onFailover: ({ to, index, error }: { to: string; index: number; error: string }) => send({ type: 'failover', to, index, error }),
+          onFailover: ({ from, to, index, error }: { from: string; to: string; index: number; error: string }) => {
+            send({ type: 'failover', from, to, index, error, action: needsUserAction(error), orchestrated: orchestratorChain.length > 0 });
+            demoteModelInChain('coder', from); // deprioritize the failed coder for next tasks
+            send({ type: 'demote', model: from });
+          },
           onContinue: ({ model, reason }: { model: string; reason: string }) => send({ type: 'continue', model, reason }),
         };
-        // If an orchestrator model is configured, it plans + delegates; else run coders directly.
-        const orchestratorChain = readAgents().orchestrator;
         const fullMessages: ChatMessage[] = [...history, { role: 'user', content: resolved.text }];
         const result = orchestratorChain.length
           ? await runOrchestrated(config, orchestratorChain, chain, resolved.text, handlers)
@@ -652,7 +656,10 @@ const server = createServer(async (req, res) => {
         });
       } catch (err: any) {
         if (isAbortError(err, ac.signal)) send({ type: 'stopped' });
-        else send({ type: 'error', message: err?.message ?? String(err) });
+        else {
+          const message = err?.message ?? String(err);
+          send({ type: 'error', message, action: needsUserAction(message) });
+        }
       } finally {
         res.end();
       }
