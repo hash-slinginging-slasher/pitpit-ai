@@ -63,9 +63,9 @@
         border-radius: 8px;
         background: var(--bg);
       }
-      .slot.primary { border-color: var(--good); }
+      /* Primary slot: a subtle tint (the provider color drives the left stripe + text). */
+      .slot.primary { background: rgba(255,255,255,0.04); }
       .slot .idx { font-size: 12px; color: var(--dim); min-width: 58px; }
-      .slot.primary .idx { color: var(--good); font-weight: 600; }
       .slot .mid { flex: 1; font-size: 13px; }
       .slot .id { color: var(--accent); }
       .slot .ctl { display: flex; gap: 4px; }
@@ -82,10 +82,12 @@
       .source-bar { display: flex; gap: 6px; flex-wrap: wrap; }
       .source-btn {
         margin: 0; padding: 6px 13px; font-size: 13px; border-radius: 999px; cursor: pointer;
+        display: inline-flex; align-items: center; gap: 6px;
         background: transparent; border: 1px solid var(--border); color: var(--dim);
       }
-      .source-btn:hover { color: var(--text); }
-      .source-btn.active { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+      .source-btn .src-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+      .source-btn.active .src-dot { background: #fff !important; }
+      .source-btn:hover { filter: brightness(1.2); }
       .cli-badge { font-size: 11px; border-radius: 5px; padding: 0 6px; border: 1px solid var(--border); }
       .cli-badge.ok { color: var(--good); border-color: var(--good); }
       .cli-badge.no { color: var(--warn); border-color: var(--warn); }
@@ -274,13 +276,24 @@
       // Model sources (routers). Each browses a different catalog; the failover chain
       // can mix models from any of them. `endpoint` null = no catalog, manual-add only.
       const SOURCES = [
-        { key: "openrouter", label: "OpenRouter", endpoint: "/api/models", prefix: "", manual: "e.g. qwen/qwen3-coder", note: "OpenRouter models. Add a key in Settings." },
-        { key: "nvidia", label: "NVIDIA build", endpoint: "/api/models/nvidia", prefix: "nvidia-build/", manual: "e.g. moonshotai/kimi-k2-instruct", note: "build.nvidia.com (OpenAI-compatible). Needs the NVIDIA key in Settings. Stored as <code>nvidia-build/&lt;model&gt;</code>. (A plain <code>nvidia/…</code> id is an OpenRouter model, not this.)" },
-        { key: "groq", label: "Groq", endpoint: "/api/models/groq", prefix: "groq/", manual: "e.g. llama-3.3-70b-versatile", note: "Groq (OpenAI-compatible, very fast). Needs the Groq key in Settings. Stored as <code>groq/&lt;model&gt;</code>." },
-        { key: "github", label: "GitHub", endpoint: "/api/models/github", prefix: "github-models/", manual: "e.g. openai/gpt-4o", note: "GitHub Models (OpenAI-compatible). Needs a GitHub token in Settings. Stored as <code>github-models/&lt;model&gt;</code>." },
-        { key: "local", label: "Local", endpoint: null, prefix: "local/", manual: "Local llama.cpp model, e.g. Ornith-1.0-9B", note: "Runs against a local <code>llama-server</code> at <code id='localUrlHint2'>http://localhost:8080/v1</code> — no key or cost. Stored as <code>local/&lt;name&gt;</code>." },
-        { key: "cli", label: "Auth CLI", endpoint: "/api/cli/status", prefix: "cli/", manual: "", note: "Uses a subscription CLI's own login (Claude Code, Codex, Gemini, Jules). Stored as <code>cli/&lt;name&gt;</code>." },
+        { key: "openrouter", label: "OpenRouter", color: "#4a9eff", endpoint: "/api/models", prefix: "", manual: "e.g. qwen/qwen3-coder", note: "OpenRouter models. Add a key in Settings." },
+        { key: "nvidia", label: "NVIDIA build", color: "#76b900", endpoint: "/api/models/nvidia", prefix: "nvidia-build/", manual: "e.g. moonshotai/kimi-k2-instruct", note: "build.nvidia.com (OpenAI-compatible). Needs the NVIDIA key in Settings. Stored as <code>nvidia-build/&lt;model&gt;</code>. (A plain <code>nvidia/…</code> id is an OpenRouter model, not this.)" },
+        { key: "groq", label: "Groq", color: "#f55036", endpoint: "/api/models/groq", prefix: "groq/", manual: "e.g. llama-3.3-70b-versatile", note: "Groq (OpenAI-compatible, very fast). Needs the Groq key in Settings. Stored as <code>groq/&lt;model&gt;</code>." },
+        { key: "github", label: "GitHub", color: "#a371f7", endpoint: "/api/models/github", prefix: "github-models/", manual: "e.g. openai/gpt-4o", note: "GitHub Models (OpenAI-compatible). Needs a GitHub token in Settings. Stored as <code>github-models/&lt;model&gt;</code>." },
+        { key: "local", label: "Local", color: "#26c6da", endpoint: null, prefix: "local/", manual: "Local llama.cpp model, e.g. Ornith-1.0-9B", note: "Runs against a local <code>llama-server</code> at <code id='localUrlHint2'>http://localhost:8080/v1</code> — no key or cost. Stored as <code>local/&lt;name&gt;</code>." },
+        { key: "cli", label: "Auth CLI", color: "#ff7eb6", endpoint: "/api/cli/status", prefix: "cli/", manual: "", note: "Uses a subscription CLI's own login (Claude Code, Codex, Gemini, Jules). Stored as <code>cli/&lt;name&gt;</code>." },
       ];
+
+      // Map a stored model id → its source key (by prefix) and that source's color.
+      function sourceKeyOf(id) {
+        if (id.startsWith("local/")) return "local";
+        if (id.startsWith("nvidia-build/")) return "nvidia";
+        if (id.startsWith("github-models/")) return "github";
+        if (id.startsWith("groq/")) return "groq";
+        if (id.startsWith("cli/")) return "cli";
+        return "openrouter";
+      }
+      function colorOf(id) { const s = SOURCES.find((x) => x.key === sourceKeyOf(id)); return s ? s.color : "var(--accent)"; }
 
       let models = [];              // catalog for the active source
       const catalogCache = {};      // source key -> models[]
@@ -348,18 +361,19 @@
           return;
         }
         $("chain").innerHTML = list
-          .map(
-            (id, i) => `
-            <div class="slot ${i === 0 ? "primary" : ""}">
-              <span class="idx">${kind} ${i + 1}${i === 0 ? " ·primary" : ""}</span>
-              <span class="mid mono id">${id}</span>
+          .map((id, i) => {
+            const col = colorOf(id);
+            return `
+            <div class="slot ${i === 0 ? "primary" : ""}" style="border-left:3px solid ${col}">
+              <span class="idx" style="color:${col}${i === 0 ? ";font-weight:600" : ""}">${kind} ${i + 1}${i === 0 ? " ·primary" : ""}</span>
+              <span class="mid mono id" style="color:${col}">${id}</span>
               <span class="ctl">
                 <button data-act="up" data-i="${i}" ${i === 0 ? "disabled" : ""}>↑</button>
                 <button data-act="down" data-i="${i}" ${i === list.length - 1 ? "disabled" : ""}>↓</button>
                 <button data-act="rm" data-i="${i}">✕</button>
               </span>
-            </div>`,
-          )
+            </div>`;
+          })
           .join("");
         $("chain").querySelectorAll("button").forEach((b) =>
           b.addEventListener("click", () => {
@@ -560,9 +574,13 @@
       }
 
       function renderSourceBar() {
-        $("sourceBar").innerHTML = SOURCES.map(
-          (s) => `<button class="source-btn ${s.key === source ? "active" : ""}" data-src="${s.key}">${s.label}</button>`,
-        ).join("");
+        $("sourceBar").innerHTML = SOURCES.map((s) => {
+          const active = s.key === source;
+          const style = active
+            ? `background:${s.color};border-color:${s.color};color:#fff`
+            : `border-color:${s.color};color:${s.color}`;
+          return `<button class="source-btn ${active ? "active" : ""}" data-src="${s.key}" style="${style}"><span class="src-dot" style="background:${s.color}"></span>${s.label}</button>`;
+        }).join("");
         $("sourceBar").querySelectorAll(".source-btn").forEach((b) =>
           b.addEventListener("click", () => switchSource(b.dataset.src)),
         );
