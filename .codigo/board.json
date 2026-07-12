@@ -1,231 +1,96 @@
 {
   "tasks": [
     {
-      "id": "mrhbiw4jyxdt7",
-      "title": "Inspect the current footer HTML structure and verify it's using full-width classes (e.g., `container`, `row`, `px-0`, or similar)",
+      "id": "mrhdndbmisy0p",
+      "title": "Greet the user warmly and ask how you can assist them today.",
       "status": "done",
       "by": "orchestrator",
-      "created": 1783832015395,
-      "updated": 1783832053081,
-      "detail": "Step 1 appears already completed based on the checklist status (marked as `[x]`). No new coder result was provided for this step.",
-      "dueDate": 1783918415395
+      "created": 1783835583538,
+      "updated": 1783835597342,
+      "detail": "User's initial message was just \"hey\", which is a greeting, and the assistant responded appropriately."
     },
     {
-      "id": "mrhbiw4kybva6",
-      "title": "Ensure the footer has no max-width or container constraints that are limiting its width",
+      "id": "mrhdoq8ztyji5",
+      "title": "You are an ORCHESTRATOR.",
       "status": "pending",
       "by": "orchestrator",
-      "created": 1783832015396,
-      "updated": 1783832100247,
-      "detail": "Step 2 has an empty coder result, indicating it was not completed. Need to inspect footer HTML/CSS for max-width or container constraints limiting footer width.",
-      "dueDate": 1783918415396
+      "created": 1783835646947,
+      "updated": 1783835656004,
+      "detail": "⚠ The response contradicts the role defined in the checklist."
     },
     {
-      "id": "mrhbiw4lzv8h0",
-      "title": "Add background-color: transparent (or inherit the body's background) to the footer",
+      "id": "mrhdoq90sadfp",
+      "title": "Your task is to break the user's coding task into a short, ordered checklist of concrete steps.",
       "status": "pending",
       "by": "orchestrator",
-      "created": 1783832015397,
-      "updated": 1783832133654,
-      "detail": "The coder only ran file discovery commands but didn't actually apply the transparent background or make any CSS changes to the footer.",
-      "dueDate": 1783918415397
+      "created": 1783835646948,
+      "updated": 1783835664699,
+      "detail": "⚠ The response did not follow the required format or task."
     },
     {
-      "id": "mrhbiw4mvk3yo",
-      "title": "Check that footer links have proper styling (color, hover effects) so they're visible against the transparent background",
+      "id": "mrhdoq91u083y",
+      "title": "Output only a numbered list (between 1 and 8 steps).",
       "status": "pending",
       "by": "orchestrator",
-      "created": 1783832015398,
-      "updated": 1783832169349,
-      "detail": "The coder ran file discovery commands (list_dir, glob) but did not actually inspect or verify footer link styling. No CSS/HTML changes were made to address the task requirements.",
-      "dueDate": 1783918415398
+      "created": 1783835646949,
+      "updated": 1783835693553,
+      "detail": "all coders failed"
     },
     {
-      "id": "mrhbiw4nrvzv5",
-      "title": "Verify the footer's padding and margins aren't creating unwanted gaps around the edges",
-      "status": "pending",
-      "by": "orchestrator",
-      "created": 1783832015399,
-      "updated": 1783832227623,
-      "detail": "The coder explored files but didn't actually verify padding/margins or make any CSS/HTML changes to address the task requirements (transparent footer, full-width, link styling).",
-      "dueDate": 1783918415399
-    },
-    {
-      "id": "mrhbiw4oi044h",
-      "title": "Test the footer across viewport sizes to confirm it remains full-width on mobile and desktop",
-      "status": "pending",
-      "by": "orchestrator",
-      "created": 1783832015400,
-      "updated": 1783832227624,
-      "detail": "Test footer responsiveness across mobile, tablet, and desktop viewport sizes to ensure full-width display is maintained across all breakpoints.",
-      "dueDate": 1784004815400
-    },
-    {
-      "id": "mrhbiw4pjuw3c",
-      "title": "Check the loremi theme's global CSS variables or styles to match footer colors with the site theme",
+      "id": "mrhdoq926nl3g",
+      "title": "Each line must be one actionable instruction, specific to the task.",
       "status": "todo",
       "by": "orchestrator",
-      "created": 1783832015401,
-      "updated": 1783832015401,
-      "detail": "Review the loremi theme's global CSS variables and styles to ensure footer colors (background, text, links) are consistent with the site's overall theme.",
-      "dueDate": 1784004815401
+      "created": 1783835646950,
+      "updated": 1783835646950
     },
     {
-      "id": "mrhbjp7c7ti39",
-      "title": "2. Ensure the footer has no max-width or container constraints that are limiting its width",
+      "id": "mrhdoq94mxhgw",
+      "title": "Do not include preamble, explanations, or code.",
       "status": "todo",
       "by": "orchestrator",
-      "created": 1783832053080,
-      "updated": 1783832053080,
-      "detail": "Re-attempt step 2: inspect footer HTML and CSS for any max-width, container, or wrapper constraints that prevent full-width display. Apply CSS fixes to remove constraints.",
-      "dueDate": 1783918453080
+      "created": 1783835646952,
+      "updated": 1783835646952
     },
     {
-      "id": "mrhbkplisjdvx",
-      "title": "3. Add background-color: transparent (or inherit the body's background) to the footer",
+      "id": "mrhdoq954htln",
+      "title": "Ensure instructions are clear, sequential, and executable by a coder agent.",
       "status": "todo",
       "by": "orchestrator",
-      "created": 1783832100246,
-      "updated": 1783832100246,
-      "detail": "Re-attempt step 3: apply background-color: transparent or inherit to the footer element via CSS. Verify the footer background inherits from body.",
-      "dueDate": 1783918500246
+      "created": 1783835646953,
+      "updated": 1783835646953
     },
     {
-      "id": "mrhblfdh2z73t",
-      "title": "3. Add background-color: transparent (or inherit the body's background) to the footer",
+      "id": "mrhdoq97gltd7",
+      "title": "Focus only on the current user request.",
       "status": "todo",
       "by": "orchestrator",
-      "created": 1783832133653,
-      "updated": 1783832133653,
-      "detail": "Duplicate of task mrhbkplisjdvx - apply background-color: transparent or inherit to footer CSS. Remove this duplicate after completing the fix.",
-      "dueDate": 1783918533653
+      "created": 1783835646955,
+      "updated": 1783835646955
     },
     {
-      "id": "mrhbm6x0d2jtm",
-      "title": "4. [x] Check that footer links have proper styling (color, hover effects) so they're visible against the transparent background — Re-attempt with actual code inspection and fixes",
+      "id": "mrhdoq98xh3zn",
+      "title": "Do not respond to questions about your identity.",
       "status": "todo",
       "by": "orchestrator",
-      "created": 1783832169348,
-      "updated": 1783832169348,
-      "detail": "Re-attempt step 4 with actual code inspection: inspect footer link CSS for color, hover effects, and visibility against transparent background. Apply fixes as needed.",
-      "dueDate": 1783918569348
+      "created": 1783835646956,
+      "updated": 1783835646956
     },
     {
-      "id": "mrhbnfvpd6v5g",
-      "title": "Inspect the current footer HTML and CSS files to understand the current structure before making changes",
+      "id": "mrhdox8je7ich",
+      "title": "1. You are an ORCHESTRATOR.",
       "status": "todo",
       "by": "orchestrator",
-      "created": 1783832227621,
-      "updated": 1783832227621,
-      "detail": "Perform initial code exploration: locate and inspect footer HTML template and associated CSS files to understand current structure before making changes.",
-      "dueDate": 1783918627621
+      "created": 1783835656003,
+      "updated": 1783835656003
     },
     {
-      "id": "mrhccmwmkd3my",
-      "title": "Verify the current status of all tasks in the Kanban board (To Do, In Progress, Review, Done).",
-      "status": "pending",
-      "by": "orchestrator",
-      "created": 1783833403126,
-      "updated": 1783833446709,
-      "detail": "Missing critical validation of Kanban workflow structure and task integrity. Need to verify all tasks are in correct columns and statuses reflect reality.",
-      "dueDate": 1783919803126
-    },
-    {
-      "id": "mrhccmwolm7w5",
-      "title": "Confirm that each card has a clear title, description, assignee, and due date if applicable.",
-      "status": "pending",
-      "by": "orchestrator",
-      "created": 1783833403128,
-      "updated": 1783833547437,
-      "detail": "⚠ Critical Kanban workflow issues remain unaddressed, including missing columns, blocked tasks, and priority validation.",
-      "dueDate": 1783919803128
-    },
-    {
-      "id": "mrhccmwp9z3r6",
-      "title": "Check for any blocked tasks and identify the reason for the blockage.",
-      "status": "pending",
-      "by": "orchestrator",
-      "created": 1783833403129,
-      "updated": 1783833581139,
-      "detail": "⚠ Blocked tasks identified but critical workflow issues remain unaddressed",
-      "dueDate": 1783919803129
-    },
-    {
-      "id": "mrhccmwq876b8",
-      "title": "Ensure that the workflow columns are correctly ordered and reflect the actual process.",
-      "status": "done",
-      "by": "orchestrator",
-      "created": 1783833403130,
-      "updated": 1783833581141,
-      "detail": "Verified Kanban column order. Current columns: todo (To Do), pending (In Progress), done (Done). Missing 'review' column per standard workflow (To Do → In Progress → Review → Done). Recommendation documented and follow-up task mrhcfq98zjg4l created to add 'review' status for code review step before tasks move to done.",
-      "dueDate": 1783919803130
-    },
-    {
-      "id": "mrhccmwsdx954",
-      "title": "Review task priorities and confirm high-priority items are visible and being addressed.",
+      "id": "mrhdp3y2y5shi",
+      "title": "1. You are an ORCHESTRATOR.",
       "status": "todo",
       "by": "orchestrator",
-      "created": 1783833403132,
-      "updated": 1783833403132,
-      "detail": "Review all task priorities. Ensure high-priority items are visible at top of columns and are actively being worked on. Flag any priority mismatches.",
-      "dueDate": 1783919803132
-    },
-    {
-      "id": "mrhccmwuauwym",
-      "title": "Validate that completed tasks in the \"Done\" column are properly closed and archived.",
-      "status": "todo",
-      "by": "orchestrator",
-      "created": 1783833403134,
-      "updated": 1783833403134,
-      "detail": "Review Done column tasks. Verify they are truly complete (code merged, tested, deployed). Archive or close completed tasks appropriately.",
-      "dueDate": 1783919803134
-    },
-    {
-      "id": "mrhccmwvvfjwm",
-      "title": "Update any outdated or missing information on cards (e.g., updated status, comments, attachments).",
-      "status": "todo",
-      "by": "orchestrator",
-      "created": 1783833403135,
-      "updated": 1783833403135,
-      "detail": "Audit all cards for missing/outdated info: status accuracy, comments/updates, attachments, links to PRs/commits. Update as needed.",
-      "dueDate": 1783919803135
-    },
-    {
-      "id": "mrhccmwwn1u1m",
-      "title": "Communicate any necessary changes or blockers to the team via the appropriate channel.",
-      "status": "todo",
-      "by": "orchestrator",
-      "created": 1783833403136,
-      "updated": 1783833403136,
-      "detail": "Identify any blockers, priority changes, or process issues. Communicate to team via appropriate channel (Slack, email, standup, etc.). Document communication.",
-      "dueDate": 1783919803136
-    },
-    {
-      "id": "mrhcdkj7p3snd",
-      "title": "Confirm that each card has a clear title, description, assignee, and due date if applicable.",
-      "status": "todo",
-      "by": "orchestrator",
-      "created": 1783833446707,
-      "updated": 1783833446707,
-      "detail": "This task (STEP 2) validates that every card has: 1) clear title, 2) descriptive detail/description, 3) assigned owner, 4) due date where applicable. Update any missing fields.",
-      "dueDate": 1783919846707
-    },
-    {
-      "id": "mrhcfq98zjg4l",
-      "title": "Create tasks for missing workflow columns, blocked status, priority review, and archiving completed items.",
-      "status": "todo",
-      "by": "orchestrator",
-      "created": 1783833547436,
-      "updated": 1783833547436
-    },
-    {
-      "id": "mrhcgg9e1giqm",
-      "title": "Ensure that the workflow columns are correctly ordered and reflect the actual process",
-      "status": "done",
-      "by": "orchestrator",
-      "created": 1783833581138,
-      "updated": 1783833581138,
-      "detail": "Verified current column order: todo → pending → done. Standard Kanban workflow requires 'review' column between 'pending' (In Progress) and 'done'. Recommend adding 'review' status for code review step before tasks move to done. Created follow-up task to add review column."
-    },
+      "created": 1783835664698,
+      "updated": 1783835664698
+    }
   ]
 }
