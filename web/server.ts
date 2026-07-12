@@ -8,6 +8,7 @@ import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } fr
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
 import { loadBrain, saveBrainNote, safeNotePath, BRAIN_DIR, ATTACH_DIR } from '../src/brain.js';
 import { extractText } from '../src/extract.js';
+import { loadBoard, saveBoard } from '../src/board.js';
 import { loadSkillsFor } from '../src/skills.js';
 import { resolveMentions } from '../src/mentions.js';
 import { WebSocketServer } from 'ws';
@@ -475,6 +476,21 @@ const server = createServer(async (req, res) => {
       } catch (e: any) {
         json(res, 200, { ok: false, error: e.message });
       }
+      return;
+    }
+
+    // Kanban board: read the project's board.
+    if (req.method === 'GET' && url.pathname === '/api/board') {
+      const cwd = url.searchParams.get('cwd') || process.cwd();
+      json(res, 200, loadBoard(cwd));
+      return;
+    }
+    // Kanban board: save the whole board (the UI manages the task list and posts it back).
+    if (req.method === 'POST' && url.pathname === '/api/board') {
+      const { cwd, board } = await readBody(req);
+      if (!cwd || !board || !Array.isArray(board.tasks)) return json(res, 400, { error: 'bad board' });
+      saveBoard(cwd, { tasks: board.tasks });
+      json(res, 200, { ok: true });
       return;
     }
 

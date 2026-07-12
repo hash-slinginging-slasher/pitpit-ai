@@ -16,6 +16,7 @@ import { viewDocumentTool } from './view-document.js';
 import { webFetchTool } from './web-fetch.js';
 import { generateImageTool } from './generate-image.js';
 import { brainNoteTool } from './brain-note.js';
+import { boardTaskTool } from './board-task.js';
 
 export const tools = [
   // File operations
@@ -47,4 +48,7 @@ export const tools = [
 
   // Project brain (second brain)
   brainNoteTool,
+
+  // Kanban board
+  boardTaskTool,
 ];

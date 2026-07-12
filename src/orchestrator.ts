@@ -8,6 +8,7 @@ import {
   type RunOptions,
 } from './agent.js';
 import { brainContext } from './brain.js';
+import { addTask, updateTask } from './board.js';
 
 /**
  * Orchestration: a reliable "orchestrator" model plans a task into a checklist and
@@ -25,6 +26,7 @@ export interface LedgerStep {
   title: string;
   status: 'pending' | 'done' | 'failed';
   note?: string;
+  cardId?: string; // linked Kanban card
 }
 
 export interface OrchestrateOptions extends RunOptions {
@@ -133,6 +135,17 @@ export async function runOrchestrated(
   const ledger: LedgerStep[] = (plan ?? [task]).map((title) => ({ title, status: 'pending' }));
   emit({ type: 'plan', steps: ledger.map((s) => s.title), orchestrator: shortName(orchestratorChain[0] ?? '') });
 
+  // Scrum master: put each planned step on the Kanban board as a To Do card.
+  const boardCwd = process.cwd();
+  try {
+    for (const s of ledger) s.cardId = addTask(boardCwd, s.title, { status: 'todo', by: 'orchestrator' }).id;
+  } catch {
+    /* board is best-effort */
+  }
+  const setCard = (step: LedgerStep, status: 'todo' | 'pending' | 'done', detail?: string) => {
+    if (step.cardId) { try { updateTask(boardCwd, step.cardId, { status, ...(detail ? { detail } : {}) }); } catch { /* ignore */ } }
+  };
+
   // 2) EXECUTE + REVIEW, step by step
   const maxSteps = options?.maxTaskSteps ?? 16;
   let executed = 0;
@@ -146,6 +159,7 @@ export async function runOrchestrated(
     abortCheck();
     executed++;
     emit({ type: 'step', phase: 'start', index: i, total: ledger.length, title: step.title });
+    setCard(step, 'pending'); // scrum master: move card to In Progress
 
     // Delegate the step to the (resilient) coder chain, with the ledger + the brain notes
     // relevant to THIS step (the orchestrator handing project details down to the coder).
@@ -188,13 +202,20 @@ export async function runOrchestrated(
       const review = parseReview(reviewText);
       if (step.status !== 'failed') step.status = review.status === 'failed' ? 'failed' : 'done';
       if (review.note) step.note = review.note;
-      if (review.next && ledger.length < maxSteps) ledger.push({ title: review.next, status: 'pending' });
+      if (review.next && ledger.length < maxSteps) {
+        const added: LedgerStep = { title: review.next, status: 'pending' };
+        try { added.cardId = addTask(boardCwd, added.title, { status: 'todo', by: 'orchestrator' }).id; } catch { /* ignore */ }
+        ledger.push(added);
+      }
       if (review.status === 'task-complete') taskComplete = true;
     } catch (err) {
       if (isAbortError(err, options?.signal)) throw err;
       // review failed → keep the coder's own verdict (done/failed) and continue
     }
 
+    // Scrum master: mark the card done, or leave it In Progress with the failure note.
+    if (step.status === 'failed') setCard(step, 'pending', `⚠ ${step.note || 'failed'}`);
+    else setCard(step, 'done', step.note);
     emit({ type: 'step', phase: step.status === 'failed' ? 'failed' : 'done', index: i, total: ledger.length, title: step.title, note: step.note });
   }
 
