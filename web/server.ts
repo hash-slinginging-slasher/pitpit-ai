@@ -6,7 +6,8 @@ import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, save
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
-import { loadBrain, BRAIN_DIR } from '../src/brain.js';
+import { loadBrain, saveBrainNote, safeNotePath, BRAIN_DIR, ATTACH_DIR } from '../src/brain.js';
+import { extractText } from '../src/extract.js';
 import { loadSkillsFor } from '../src/skills.js';
 import { resolveMentions } from '../src/mentions.js';
 import { WebSocketServer } from 'ws';
@@ -446,6 +447,34 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/brain') {
       const cwd = url.searchParams.get('cwd') || process.cwd();
       json(res, 200, { dir: `${BRAIN_DIR}`, notes: loadBrain(cwd).map((n) => ({ name: n.name, content: n.content })) });
+      return;
+    }
+
+    // Attach a dropped file to the brain: store the raw file under _attachments/, and if its
+    // text can be extracted (pdf/docx/xlsx/csv/text), also save it as a searchable note under
+    // attachments/. Returns the note name to link from the current note.
+    if (req.method === 'POST' && url.pathname === '/api/brain/attach') {
+      const { cwd, filename, dataBase64 } = await readBody(req);
+      if (!cwd || !filename || typeof dataBase64 !== 'string') return json(res, 400, { error: 'bad request' });
+      const buf = Buffer.from(dataBase64, 'base64');
+      if (buf.length > 25 * 1024 * 1024) return json(res, 400, { error: 'file too large (25 MB max)' });
+      const safeFile = basename(String(filename)).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 120) || 'file';
+      const attachAbs = resolve(cwd, BRAIN_DIR, ATTACH_DIR, safeFile);
+      try {
+        mkdirSync(dirname(attachAbs), { recursive: true });
+        writeFileSync(attachAbs, buf);
+        const text = await extractText(buf, safeFile);
+        let noteName: string | null = null;
+        if (text) {
+          const base = safeNotePath(safeFile.replace(/\.[^.]+$/, ''));
+          noteName = `attachments/${base}`;
+          saveBrainNote(cwd, noteName, `Source: ${filename} (dropped attachment)\n\n${text.slice(0, 40000)}`, 'replace');
+        }
+        if ((await hasGit()) && (await isRepo(cwd))) await commitAll(cwd, `attach ${safeFile}`, undefined, USER_AUTHOR);
+        json(res, 200, { ok: true, file: `${BRAIN_DIR}/${ATTACH_DIR}/${safeFile}`, noteName, extracted: !!text, chars: text?.length ?? 0 });
+      } catch (e: any) {
+        json(res, 200, { ok: false, error: e.message });
+      }
       return;
     }
 

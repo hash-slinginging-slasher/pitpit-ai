@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, appendFileSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { embeddingModel } from './config.js';
 import { embeddingsEnabled, embedTexts, embedOne, cosine } from './embeddings.js';
 
@@ -24,25 +24,39 @@ export function brainDir(cwd: string): string {
   return join(cwd, BRAIN_DIR);
 }
 
-/** Load every note in the vault. Missing dir → []. */
+/** Folder holding raw dropped attachments (not treated as notes). */
+export const ATTACH_DIR = '_attachments';
+
+/** Load every note in the vault, recursing subfolders. A note's `name` is its path
+ * relative to the brain dir (e.g. "decisions/rate-limits"). Missing dir → []. */
 export function loadBrain(cwd: string): BrainNote[] {
   const dir = brainDir(cwd);
   if (!existsSync(dir)) return [];
   const out: BrainNote[] = [];
-  let files: string[];
-  try {
-    files = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  for (const f of files) {
-    if (!/\.md$/i.test(f) || /^readme\.md$/i.test(f)) continue;
+  const walk = (d: string, prefix: string, depth: number) => {
+    if (depth > 8) return;
+    let entries: import('fs').Dirent[];
     try {
-      out.push({ name: f.replace(/\.md$/i, ''), content: readFileSync(join(dir, f), 'utf-8'), path: join(dir, f) });
+      entries = readdirSync(d, { withFileTypes: true });
     } catch {
-      /* skip unreadable */
+      return;
     }
-  }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || e.name === ATTACH_DIR) continue; // skip hidden + raw attachments
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      const full = join(d, e.name);
+      if (e.isDirectory()) {
+        walk(full, rel, depth + 1);
+      } else if (/\.md$/i.test(e.name) && !/^readme\.md$/i.test(e.name)) {
+        try {
+          out.push({ name: rel.replace(/\.md$/i, ''), content: readFileSync(full, 'utf-8'), path: full });
+        } catch {
+          /* skip unreadable */
+        }
+      }
+    }
+  };
+  walk(dir, '', 0);
   return out;
 }
 
@@ -209,17 +223,27 @@ export async function brainContext(cwd: string, query: string): Promise<string> 
   return formatBrainContext(await retrieveBrain(cwd, query));
 }
 
-/** Write/append a note to the vault. Returns the file path. */
+/** Sanitize a note title/path into a safe relative path (folders allowed via "/"). */
+export function safeNotePath(title: string): string {
+  const rel = (title || 'notes')
+    .split('/')
+    .map((seg) => seg.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase().slice(0, 60))
+    .filter(Boolean)
+    .join('/');
+  return rel || 'notes';
+}
+
+/** Write/append a note to the vault. The title may include folders (e.g. "decisions/x"),
+ * which are created automatically. Returns the file path. */
 export function saveBrainNote(cwd: string, title: string, content: string, mode: 'append' | 'replace' = 'append'): string {
-  const dir = brainDir(cwd);
-  mkdirSync(dir, { recursive: true });
-  const safe = (title || 'notes').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase().slice(0, 60) || 'notes';
-  const p = join(dir, `${safe}.md`);
+  const rel = safeNotePath(title);
+  const p = join(brainDir(cwd), `${rel}.md`);
+  mkdirSync(dirname(p), { recursive: true });
   const body = content.trim();
   if (mode === 'append' && existsSync(p)) {
     appendFileSync(p, `\n\n${body}\n`);
   } else {
-    writeFileSync(p, `# ${title}\n\n${body}\n`);
+    writeFileSync(p, `# ${rel.split('/').pop()}\n\n${body}\n`);
   }
   return p;
 }
