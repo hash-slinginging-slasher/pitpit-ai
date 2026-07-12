@@ -292,7 +292,7 @@
         { key: "groq", label: "Groq", color: "#f55036", endpoint: "/api/models/groq", prefix: "groq/", manual: "e.g. llama-3.3-70b-versatile", note: "Groq (OpenAI-compatible, very fast). Needs the Groq key in Settings. Stored as <code>groq/&lt;model&gt;</code>." },
         { key: "github", label: "GitHub", color: "#a371f7", endpoint: "/api/models/github", prefix: "github-models/", manual: "e.g. openai/gpt-4o", note: "GitHub Models (OpenAI-compatible). Needs a GitHub token in Settings. Stored as <code>github-models/&lt;model&gt;</code>." },
         { key: "local", label: "Local", color: "#26c6da", endpoint: null, prefix: "local/", manual: "Local llama.cpp model, e.g. Ornith-1.0-9B", note: "Runs against a local <code>llama-server</code> at <code id='localUrlHint2'>http://localhost:8080/v1</code> — no key or cost. Stored as <code>local/&lt;name&gt;</code>." },
-        { key: "cli", label: "Auth CLI", color: "#ff7eb6", endpoint: "/api/cli/status", prefix: "cli/", manual: "", note: "Uses a subscription CLI's own login (Claude Code, Codex, Gemini, Jules). Stored as <code>cli/&lt;name&gt;</code>." },
+        { key: "cli", label: "Auth CLI", color: "#ff7eb6", endpoint: "/api/cli/status", prefix: "cli/", manual: "", note: "Uses a subscription CLI's own login (Claude Code, Codex, Gemini, Jules, OpenCode). Stored as <code>cli/&lt;name&gt;</code>. OpenCode's own models (incl. free ones) are listed below as <code>cli/opencode/&lt;model&gt;</code>." },
       ];
 
       // Map a stored model id → its source key (by prefix) and that source's color.
@@ -482,6 +482,27 @@
           b.addEventListener("click", () => logoutCli(b.dataset.logout, b)),
         );
         wireGridButtons();
+        appendOpencodeModels();
+      }
+
+      // OpenCode exposes its own models (incl. free ones); list them so they're addable as
+      // cli/opencode/<model> without needing the manual add-by-id box.
+      async function appendOpencodeModels() {
+        const oc = cliStatus.find((c) => c.name === "opencode");
+        if (!oc || !oc.installed) return;
+        try {
+          const models = (await (await fetch("/api/models/opencode")).json()).models || [];
+          if (!models.length || source !== "cli") return;
+          const q = $("search").value.trim().toLowerCase();
+          const list = models.filter((m) => !q || (m.id + " " + (m.name || "")).toLowerCase().includes(q));
+          const cards = list.map((m) => {
+            const pos = agents[activeTab].indexOf(m.id);
+            const inChain = pos !== -1;
+            return `<div class="card ${inChain ? "inchain" : ""}"><div class="name">${m.name || m.id}</div><div class="id">${m.id}</div><div class="meta"><span class="tag-free">FREE</span></div><div class="spacer"></div>${inChain ? `<button class="add inchain" data-rm="${m.id}" style="width:100%;margin-top:0;">✓ ${activeTab} #${pos + 1} — remove</button>` : `<button class="add" data-add="${m.id}" style="width:100%;margin-top:0;">+ Add to ${agentDef().label}</button>`}</div>`;
+          }).join("");
+          $("grid").insertAdjacentHTML("beforeend", `<div style="grid-column:1/-1; color:var(--dim); font-size:13px; margin:10px 0 2px;">OpenCode models — free coding models, route via <code>cli/opencode</code></div>${cards}`);
+          wireGridButtons();
+        } catch (e) {}
       }
 
       async function loginCli(name, btn) {
@@ -565,12 +586,9 @@
       }
 
       function wireGridButtons() {
-        $("grid").querySelectorAll("button[data-add]").forEach((b) =>
-          b.addEventListener("click", () => addToChain(activeTab, b.dataset.add)),
-        );
-        $("grid").querySelectorAll("button[data-rm]").forEach((b) =>
-          b.addEventListener("click", () => removeFromChain(activeTab, b.dataset.rm)),
-        );
+        // onclick (not addEventListener) so re-wiring after appends is idempotent.
+        $("grid").querySelectorAll("button[data-add]").forEach((b) => (b.onclick = () => addToChain(activeTab, b.dataset.add)));
+        $("grid").querySelectorAll("button[data-rm]").forEach((b) => (b.onclick = () => removeFromChain(activeTab, b.dataset.rm)));
       }
 
       function renderGrid() {

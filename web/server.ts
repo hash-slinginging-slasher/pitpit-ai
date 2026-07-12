@@ -141,6 +141,19 @@ async function fetchGithubModels() {
 }
 
 /**
+ * OpenCode models (`opencode models`) — including its free "zen" models. Stored as
+ * `cli/opencode/<id>` so they route through the OpenCode CLI's own auth.
+ */
+async function fetchOpencodeModels() {
+  const { stdout } = await execAsync('opencode models', { timeout: 15000, windowsHide: true, maxBuffer: 1024 * 1024 });
+  return stdout
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((id) => card(`cli/opencode/${id}`, { name: id.replace(/^opencode\//, ''), description: 'via OpenCode (cli/opencode)' }));
+}
+
+/**
  * Groq catalog. Its OpenAI-compatible `GET /openai/v1/models` lists model ids; we prefix
  * them with `groq/` so they route to Groq. Needs the Groq key.
  */
@@ -270,6 +283,16 @@ const server = createServer(async (req, res) => {
         json(res, 200, { models: await fetchGroqModels(), agents: readAgents(), hasKey: !!readGroqKey() });
       } catch (e: any) {
         json(res, 200, { models: [], agents: readAgents(), hasKey: !!readGroqKey(), error: e.message });
+      }
+      return;
+    }
+
+    // OpenCode models (cli/opencode/…). Returns { error } if opencode isn't installed.
+    if (req.method === 'GET' && url.pathname === '/api/models/opencode') {
+      try {
+        json(res, 200, { models: await fetchOpencodeModels(), agents: readAgents() });
+      } catch (e: any) {
+        json(res, 200, { models: [], agents: readAgents(), error: e.message });
       }
       return;
     }
