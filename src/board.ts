@@ -100,3 +100,56 @@ export function deleteTask(cwd: string, id: string): void {
   board.tasks = board.tasks.filter((x) => x.id !== id);
   saveBoard(cwd, board);
 }
+
+// --- Junk-card detection: self-heal a board polluted by a weak orchestrator ---
+// A weak planner echoes its own prompt, saves error notices, or emits boilerplate as "tasks".
+// Those cards then get resumed and replayed forever. These predicates classify them.
+
+/** A card that's really the planner echoing its instructions back — never a real task. */
+export function isPlanEcho(title: string): boolean {
+  return /^you are an orchestrator\b|output only a numbered list|one actionable instruction|do not include (preamble|generic|filler)|break the user['’]?s (coding )?task|no preamble|executable by a coder agent|do not respond to questions about|between \d+ and \d+ steps|concrete change to the code or files|focus only on the current user/i.test(
+    title.trim(),
+  );
+}
+
+/** A card that's actually an error/notice the model emitted (rate limit / out of credit). */
+export function isErrorNoise(title: string): boolean {
+  return /\badd \d+ credits?\b|unlock \d+ free|free.?models.?per.?day|rate.?limit|out of credit|quota (exceeded|reached)|insufficient (credit|balance|funds)/i.test(
+    title,
+  );
+}
+
+/** Boilerplate meta-steps / hallucinated PM-tool references a weak planner emits as filler. */
+export function isGenericFiller(title: string): boolean {
+  return /break the task into smaller|(identify|determine) (the )?(required )?(programming language|tools)|set up (the )?(development )?environment|write the initial code (structure|pseudocode)|test the code with sample inputs|debug and (refine|fix) (the |any )?(code|issues)|document the code and finalize|deliver the final working|confirm the specific coding task|\bjira\b|\btrello\b|azure devops|project management tool/i.test(
+    title,
+  );
+}
+
+/** Unambiguous corruption — safe to auto-delete during resume (never a legitimate task). */
+export function isCorruptCard(title: string): boolean {
+  return isPlanEcho(title) || isErrorNoise(title);
+}
+
+/** All junk incl. borderline filler — used by the user-invoked "/board clean" command. */
+export function isJunkCard(title: string): boolean {
+  return isCorruptCard(title) || isGenericFiller(title);
+}
+
+/** Remove cards. mode 'all' wipes the board; 'clean' drops junk cards. Returns removed titles. */
+export function cleanBoard(cwd: string, mode: 'all' | 'clean'): string[] {
+  const board = loadBoard(cwd);
+  const removed: string[] = [];
+  if (mode === 'all') {
+    removed.push(...board.tasks.map((t) => t.title));
+    saveBoard(cwd, { tasks: [] });
+  } else {
+    const kept = board.tasks.filter((t) => {
+      const junk = isJunkCard(t.title);
+      if (junk) removed.push(t.title);
+      return !junk;
+    });
+    saveBoard(cwd, { tasks: kept });
+  }
+  return removed;
+}

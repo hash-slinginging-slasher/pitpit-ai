@@ -10,6 +10,7 @@ import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle
 import { hasGit, isRepo, initRepo, commitAll, recentCommits, AGENT_AUTHOR } from './git.js';
 import { resolveMentions, mentionCompletions } from './mentions.js';
 import { loadSkillsFor, skillIndex } from './skills.js';
+import { loadBoard, cleanBoard } from './board.js';
 
 /** Tools that change files on disk — a turn using any of these triggers an auto-commit. */
 const MUTATING_TOOLS = new Set([
@@ -58,6 +59,17 @@ const INIT_PROMPT = [
   `Keep it concise (under ~150 lines) and accurate to what you actually found. If ${CONTEXT_FILE}`,
   'already exists, update it. When done, briefly confirm what you wrote.',
 ].join('\n');
+
+// System prompt for a direct "@orchestrator" conversation — the user talking to the
+// scrum master, not kicking off a plan/execute run.
+const ORCHESTRATOR_CHAT_SYSTEM = [
+  'You are the ORCHESTRATOR (scrum master) for this project. The user is addressing you directly.',
+  'Answer their question conversationally and concisely, grounded in the Kanban board state and',
+  'project brain provided to you. You may assess progress, flag problems (e.g. junk, duplicate, or',
+  'stale cards), recommend what to do next, and suggest reprioritizing. Do NOT write code or call',
+  'tools — respond as the planner/manager. If the board looks corrupted or bloated, say so and',
+  'suggest running "/board clean" or "/board clear".',
+].join(' ');
 
 /** Read the project context file from the current working directory, if present. */
 function readProjectContext(): string {
@@ -555,6 +567,8 @@ async function main() {
           `  ${C.cyan}/autocommit${C.reset}    auto-commit file changes to git (currently ${autoCommit ? 'on' : 'off'}; ${C.reset}${C.cyan}/autocommit on|off${C.reset})\n` +
           `  ${C.cyan}/clear${C.reset}         clear the conversation context (alias: ${C.reset}${C.cyan}/new${C.reset})\n` +
           `  ${C.cyan}@<name>${C.reset}        load a skill, or attach files by fuzzy name (e.g. ${C.reset}${C.cyan}@prd${C.reset}${C.dim}) — inlined for the model${C.reset}\n` +
+          `  ${C.cyan}@orchestrator${C.reset}  ${C.dim}<msg>${C.reset}  ask the orchestrator directly (status, priorities) — no plan/execute\n` +
+          `  ${C.cyan}/board${C.reset}         show the Kanban board (${C.reset}${C.cyan}/board clean${C.reset}${C.dim} removes junk, ${C.reset}${C.cyan}/board clear${C.reset}${C.dim} wipes it)${C.reset}\n` +
           `  ${C.cyan}/skills${C.reset}        list available skills (from ${C.reset}${C.cyan}.skills/${C.reset}${C.dim})${C.reset}\n` +
           `  ${C.cyan}/dir${C.reset} ${C.dim}[path]${C.reset}    list files in the working dir (alias: ${C.reset}${C.cyan}/ls${C.reset}${C.dim})${C.reset}\n` +
           `  ${C.cyan}Esc${C.reset}            stop the current task (Ctrl+C quits the app)\n` +
@@ -768,6 +782,86 @@ async function main() {
               `${rest > 0 ? ` ${C.dim}(${rest} failover${rest === 1 ? '' : 's'} after it)${C.reset}` : ''}\n`,
           );
         }
+      }
+      continue;
+    }
+
+    // /board [clean|clear]: inspect or clean the Kanban board (self-heal a junk-filled board).
+    if (input === '/board' || input.startsWith('/board ')) {
+      const arg = input.slice('/board'.length).trim().toLowerCase();
+      if (arg === 'clear' || arg === 'wipe') {
+        const removed = cleanBoard(workDir, 'all');
+        console.log(`  ${C.green}cleared the board — removed ${removed.length} card${removed.length === 1 ? '' : 's'}.${C.reset} ${C.dim}(recoverable via git)${C.reset}\n`);
+      } else if (arg === 'clean') {
+        const removed = cleanBoard(workDir, 'clean');
+        if (!removed.length) console.log(`  ${C.green}board is clean — no junk cards found.${C.reset}\n`);
+        else {
+          console.log(`  ${C.green}removed ${removed.length} junk card${removed.length === 1 ? '' : 's'}:${C.reset}`);
+          removed.slice(0, 25).forEach((t) => console.log(`  ${C.dim}- ${t.slice(0, 72)}${C.reset}`));
+          if (removed.length > 25) console.log(`  ${C.dim}…and ${removed.length - 25} more${C.reset}`);
+          console.log();
+        }
+      } else {
+        const b = loadBoard(workDir);
+        const by = { todo: 0, pending: 0, done: 0 } as Record<string, number>;
+        for (const t of b.tasks) by[t.status] = (by[t.status] || 0) + 1;
+        console.log(`\n  ${C.bold}Kanban board${C.reset} ${C.dim}(${b.tasks.length} cards — ${by.todo} todo, ${by.pending} in-progress, ${by.done} done)${C.reset}`);
+        b.tasks.slice(0, 40).forEach((t) => {
+          const mark = t.status === 'done' ? `${C.green}[x]` : t.status === 'pending' ? `${C.cyan}[~]` : `${C.dim}[ ]`;
+          console.log(`  ${mark}${C.reset} ${t.title.slice(0, 72)}`);
+        });
+        if (b.tasks.length > 40) console.log(`  ${C.dim}…and ${b.tasks.length - 40} more${C.reset}`);
+        console.log(`  ${C.dim}usage: ${C.reset}${C.cyan}/board clean${C.reset}${C.dim} (remove junk) · ${C.reset}${C.cyan}/board clear${C.reset}${C.dim} (wipe all)${C.reset}\n`);
+      }
+      continue;
+    }
+
+    // @orchestrator <message>: talk to the orchestrator/scrum master directly — it answers
+    // conversationally about the plan/board/project WITHOUT planning or delegating to coders.
+    const orchAsk = input.match(/^@orchestrator\b\s*([\s\S]*)$/i);
+    if (orchAsk) {
+      const question = orchAsk[1].trim() || 'What is the current status of the board and what should we do next?';
+      const orchestratorChain = readAgents().orchestrator;
+      if (!orchestratorChain.length) {
+        console.log(`  ${C.yellow}No orchestrator configured — add one in the web UI (Orchestrator agent).${C.reset}\n`);
+        continue;
+      }
+      // Give it the board + relevant brain so it can actually reason about the kanban.
+      const b = loadBoard(workDir);
+      const openCards = b.tasks.filter((t) => t.status !== 'done');
+      const boardSummary = b.tasks.length
+        ? `Kanban board — ${b.tasks.length} cards (${b.tasks.length - openCards.length} done, ${openCards.length} open):\n` +
+          b.tasks.slice(0, 60).map((t) => `- [${t.status}] ${t.title}${t.source ? ` (from ${t.source})` : ''}`).join('\n') +
+          (b.tasks.length > 60 ? `\n…and ${b.tasks.length - 60} more` : '')
+        : 'The Kanban board is empty.';
+      const notes = await retrieveBrain(workDir, question).catch(() => []);
+      const brain = notes.length ? `${formatBrainContext(notes)}\n\n---\n\n` : '';
+      const context = `${brain}${boardSummary}\n\n---\n\nThe user asks the orchestrator: ${question}`;
+      console.log(`\n  ${C.magenta}▣ orchestrator${C.reset} ${C.dim}(${shortName(orchestratorChain[0])})${C.reset}`);
+      console.log(`  ${C.dim}(Esc to stop)${C.reset}\n`);
+      renderer.reset();
+      turnActive = true;
+      activeAbort = new AbortController();
+      try {
+        const res = await runAgentChain(config, orchestratorChain, context, {
+          noTools: true,
+          instructions: ORCHESTRATOR_CHAT_SYSTEM,
+          signal: activeAbort.signal,
+          onEvent: (e: AgentEvent) => renderer.handle(e),
+        });
+        renderer.done();
+        messages.push({ role: 'user', content: input });
+        messages.push({ role: 'assistant', content: res.text });
+        await ensureSession();
+        await log('user', input);
+        await log('assistant', res.text);
+      } catch (err: any) {
+        renderer.done();
+        if (isAbortError(err, activeAbort?.signal)) console.log(`\n  ${C.dim}(stopped)${C.reset}\n`);
+        else console.log(`\n  ${C.yellow}orchestrator error: ${err?.message ?? err}${C.reset}\n`);
+      } finally {
+        turnActive = false;
+        activeAbort = null;
       }
       continue;
     }

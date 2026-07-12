@@ -8,7 +8,7 @@ import {
   type RunOptions,
 } from './agent.js';
 import { brainContext, retrieveBrain, formatBrainContext } from './brain.js';
-import { addTask, updateTask, loadBoard, deleteTask } from './board.js';
+import { addTask, updateTask, loadBoard, deleteTask, isPlanEcho, isCorruptCard } from './board.js';
 import { readAgents } from './config.js';
 
 /**
@@ -61,17 +61,6 @@ const REVIEW_INSTRUCTIONS = [
   '(Use task-complete only when the ENTIRE task is finished.)',
 ].join('\n');
 
-/**
- * A "step" that is really the planner echoing its own instructions back (a weak-model
- * failure), not an actual task. These must never become checklist steps / board cards —
- * doing so produced garbage plans like "1. You are an ORCHESTRATOR" that get replayed forever.
- */
-const PLAN_ECHO_RE =
-  /^you are an orchestrator\b|output only a numbered list|one actionable instruction|do not include (preamble|generic|filler)|break the user['’]?s (coding )?task|no preamble|executable by a coder agent|do not respond to questions about|between \d+ and \d+ steps|concrete change to the code or files|focus only on the current user/i;
-function looksLikePlanEcho(title: string): boolean {
-  return PLAN_ECHO_RE.test(title.trim());
-}
-
 /** Extract a checklist from the planner's text. Tolerant; returns null if nothing usable. */
 function parsePlan(text: string): string[] | null {
   const steps: string[] = [];
@@ -80,7 +69,7 @@ function parsePlan(text: string): string[] | null {
     const m = line.match(/^(?:\d+[.)]|[-*])\s+(.*)$/);
     if (m && m[1].trim()) {
       const title = m[1].trim().replace(/\s+/g, ' ').slice(0, 200);
-      if (!looksLikePlanEcho(title)) steps.push(title); // drop instruction-echo lines
+      if (!isPlanEcho(title)) steps.push(title); // drop instruction-echo lines
     }
   }
   return steps.length ? steps.slice(0, 8) : null;
@@ -157,12 +146,12 @@ export async function runOrchestrated(
     const openAll = loadBoard(boardCwd).tasks.filter(
       (t) => t.status !== 'done' && (t.by === 'orchestrator' || !!t.planId),
     );
-    // Self-heal: a weak planner can echo its own instructions back, which then get saved as
-    // cards ("You are an ORCHESTRATOR", "Output only a numbered list"…). Those are never real
-    // tasks, and left on the board they'd be resumed and replayed every turn. Delete them.
+    // Self-heal: a weak planner echoes its instructions back, saves error notices ("Add 10
+    // credits…"), etc., which get stored as cards and then replayed every turn. Those are never
+    // real tasks, so delete them. (For deeper cleanup incl. boilerplate filler, run /board clean.)
     const open: typeof openAll = [];
     for (const t of openAll) {
-      if (looksLikePlanEcho(t.title)) {
+      if (isCorruptCard(t.title)) {
         try { deleteTask(boardCwd, t.id); } catch { /* ignore */ }
       } else {
         open.push(t);
