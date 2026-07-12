@@ -206,21 +206,25 @@
           <span id="copyKeyStatus"></span>
         </div>
 
-        <label for="nvidiaInput" style="margin-top: 16px;">NVIDIA build API key <span style="color:var(--dim)">(build.nvidia.com — <code>nvidia/…</code> models)</span></label>
+        <label for="nvidiaInput" style="margin-top: 16px;">NVIDIA build API key <span style="color:var(--dim)">(build.nvidia.com — <code>nvidia-build/…</code> models)</span></label>
         <input id="nvidiaInput" type="password" placeholder="nvapi-…" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><span id="nvidiaStatus"></span></div>
+        <div class="show-key"><label><input type="checkbox" id="nvidiaShow" /> show</label><button id="nvidiaCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="nvidiaCopyStatus"></span><span id="nvidiaStatus"></span></div>
 
-        <label for="githubInput" style="margin-top: 16px;">GitHub Models token <span style="color:var(--dim)">(github.com/marketplace/models — <code>github/…</code> models)</span></label>
+        <label for="groqInput" style="margin-top: 16px;">Groq API key <span style="color:var(--dim)">(console.groq.com — <code>groq/…</code> models)</span></label>
+        <input id="groqInput" type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" />
+        <div class="show-key"><label><input type="checkbox" id="groqShow" /> show</label><button id="groqCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="groqCopyStatus"></span><span id="groqStatus"></span></div>
+
+        <label for="githubInput" style="margin-top: 16px;">GitHub Models token <span style="color:var(--dim)">(github.com/marketplace/models — <code>github-models/…</code> models)</span></label>
         <input id="githubInput" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><span id="githubStatus"></span></div>
+        <div class="show-key"><label><input type="checkbox" id="githubShow" /> show</label><button id="githubCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="githubCopyStatus"></span><span id="githubStatus"></span></div>
 
         <label for="geminiInput" style="margin-top: 16px;">Gemini API key <span style="color:var(--dim)">(optional — lets <code>cli/gemini</code> use the API instead of the CLI login)</span></label>
         <input id="geminiInput" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><span id="geminiStatus"></span></div>
+        <div class="show-key"><label><input type="checkbox" id="geminiShow" /> show</label><button id="geminiCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="geminiCopyStatus"></span><span id="geminiStatus"></span></div>
 
         <label for="julesInput" style="margin-top: 16px;">Jules API key <span style="color:var(--dim)">(<code>cli/jules</code> — async agent that opens a PR on a connected GitHub repo)</span></label>
         <input id="julesInput" type="password" placeholder="from jules.google → Settings" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><span id="julesStatus"></span></div>
+        <div class="show-key"><label><input type="checkbox" id="julesShow" /> show</label><button id="julesCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="julesCopyStatus"></span><span id="julesStatus"></span></div>
 
         <label for="dbInput" style="margin-top: 16px;">Postgres connection URL (for projects &amp; history)</label>
         <input id="dbInput" type="text" placeholder="postgres://user:pass@localhost:5432/dbname" autocomplete="off" spellcheck="false" />
@@ -263,6 +267,7 @@
       const SOURCES = [
         { key: "openrouter", label: "OpenRouter", endpoint: "/api/models", prefix: "", manual: "e.g. qwen/qwen3-coder", note: "OpenRouter models. Add a key in Settings." },
         { key: "nvidia", label: "NVIDIA build", endpoint: "/api/models/nvidia", prefix: "nvidia-build/", manual: "e.g. moonshotai/kimi-k2-instruct", note: "build.nvidia.com (OpenAI-compatible). Needs the NVIDIA key in Settings. Stored as <code>nvidia-build/&lt;model&gt;</code>. (A plain <code>nvidia/…</code> id is an OpenRouter model, not this.)" },
+        { key: "groq", label: "Groq", endpoint: "/api/models/groq", prefix: "groq/", manual: "e.g. llama-3.3-70b-versatile", note: "Groq (OpenAI-compatible, very fast). Needs the Groq key in Settings. Stored as <code>groq/&lt;model&gt;</code>." },
         { key: "github", label: "GitHub", endpoint: "/api/models/github", prefix: "github-models/", manual: "e.g. openai/gpt-4o", note: "GitHub Models (OpenAI-compatible). Needs a GitHub token in Settings. Stored as <code>github-models/&lt;model&gt;</code>." },
         { key: "local", label: "Local", endpoint: null, prefix: "local/", manual: "Local llama.cpp model, e.g. Ornith-1.0-9B", note: "Runs against a local <code>llama-server</code> at <code id='localUrlHint2'>http://localhost:8080/v1</code> — no key or cost. Stored as <code>local/&lt;name&gt;</code>." },
         { key: "cli", label: "Auth CLI", endpoint: "/api/cli/status", prefix: "cli/", manual: "", note: "Uses a subscription CLI's own login (Claude Code, Codex, Gemini, Jules). Stored as <code>cli/&lt;name&gt;</code>." },
@@ -636,6 +641,10 @@
           $("nvidiaInput").placeholder = s.hasNvidia ? s.nvidiaMasked + (s.nvidiaFromEnv ? " (from env)" : "") : "nvapi-…";
           $("nvidiaStatus").textContent = s.hasNvidia ? "configured ✓" : "not set";
           $("nvidiaStatus").style.color = s.hasNvidia ? "var(--good)" : "var(--dim)";
+          $("groqInput").value = "";
+          $("groqInput").placeholder = s.hasGroq ? s.groqMasked + (s.groqFromEnv ? " (from env)" : "") : "gsk_…";
+          $("groqStatus").textContent = s.hasGroq ? "configured ✓" : "not set";
+          $("groqStatus").style.color = s.hasGroq ? "var(--good)" : "var(--dim)";
           $("githubInput").value = "";
           $("githubInput").placeholder = s.hasGithub ? s.githubMasked + (s.githubFromEnv ? " (from env)" : "") : "ghp_… or github_pat_…";
           $("githubStatus").textContent = s.hasGithub ? "configured ✓" : "not set";
@@ -673,9 +682,10 @@
         const dbUrl = $("dbInput").value.trim();
         const nvidia = $("nvidiaInput").value.trim();
         const github = $("githubInput").value.trim();
+        const groq = $("groqInput").value.trim();
         const gemini = $("geminiInput").value.trim();
         const jules = $("julesInput").value.trim();
-        if (!key && !dbUrl && !nvidia && !github && !gemini && !jules) { $("settingsStatus").textContent = "Enter a key or a Postgres URL."; $("settingsStatus").className = "status"; return; }
+        if (!key && !dbUrl && !nvidia && !github && !groq && !gemini && !jules) { $("settingsStatus").textContent = "Enter a key or a Postgres URL."; $("settingsStatus").className = "status"; return; }
         $("settingsStatus").textContent = "Saving…"; $("settingsStatus").className = "status";
         try {
           const payload = {};
@@ -683,6 +693,7 @@
           if (dbUrl) payload.databaseUrl = dbUrl;
           if (nvidia) payload.nvidiaApiKey = nvidia;
           if (github) payload.githubToken = github;
+          if (groq) payload.groqApiKey = groq;
           if (gemini) payload.geminiApiKey = gemini;
           if (jules) payload.julesApiKey = jules;
           const s = await (await fetch("/api/settings", {
@@ -691,12 +702,12 @@
           })).json();
           keyIsSet = s.hasKey; reflectKeyState();
           $("settingsStatus").textContent = "Saved."
-            + (s.hasKey ? " OpenRouter ✓" : "") + (s.hasNvidia ? " NVIDIA ✓" : "")
+            + (s.hasKey ? " OpenRouter ✓" : "") + (s.hasNvidia ? " NVIDIA ✓" : "") + (s.hasGroq ? " Groq ✓" : "")
             + (s.hasGithub ? " GitHub ✓" : "") + (s.hasGemini ? " Gemini ✓" : "") + (s.hasJules ? " Jules ✓" : "") + (s.hasDb ? " DB ✓" : "");
           $("settingsStatus").className = "status ok";
           setTimeout(closeSettings, 900);
           // Refresh any catalog whose key just changed.
-          delete catalogCache.nvidia; delete catalogCache.github;
+          delete catalogCache.nvidia; delete catalogCache.github; delete catalogCache.groq;
           loadSettings();
           load();
         } catch (e) {
@@ -736,6 +747,27 @@
         const s = await reveal();
         if (!s.openrouterApiKey) { $("copyKeyStatus").textContent = "no key set"; $("copyKeyStatus").style.color = "var(--warn)"; setTimeout(()=>$("copyKeyStatus").textContent="",1500); return; }
         copyToClipboard(s.openrouterApiKey, $("copyKeyStatus"));
+      });
+      // Generic show/copy for the other provider keys (same behavior as OpenRouter above).
+      [
+        ["nvidiaInput", "nvidiaShow", "nvidiaCopy", "nvidiaCopyStatus", "nvidiaApiKey"],
+        ["groqInput", "groqShow", "groqCopy", "groqCopyStatus", "groqApiKey"],
+        ["githubInput", "githubShow", "githubCopy", "githubCopyStatus", "githubToken"],
+        ["geminiInput", "geminiShow", "geminiCopy", "geminiCopyStatus", "geminiApiKey"],
+        ["julesInput", "julesShow", "julesCopy", "julesCopyStatus", "julesApiKey"],
+      ].forEach(([inputId, showId, copyId, copyStatusId, secretKey]) => {
+        const inp = $(inputId);
+        inp.addEventListener("input", () => (inp.dataset.edited = "1"));
+        $(showId).addEventListener("change", async (e) => {
+          if (e.target.checked) { const s = await reveal(); if (s[secretKey]) inp.value = s[secretKey]; inp.type = "text"; }
+          else { inp.type = "password"; if (!inp.dataset.edited) inp.value = ""; }
+        });
+        $(copyId).addEventListener("click", async () => {
+          const s = await reveal();
+          const st = $(copyStatusId);
+          if (!s[secretKey]) { st.textContent = "no key set"; st.style.color = "var(--warn)"; setTimeout(() => (st.textContent = ""), 1500); return; }
+          copyToClipboard(s[secretKey], st);
+        });
       });
       $("copyDb").addEventListener("click", async () => {
         const s = await reveal();

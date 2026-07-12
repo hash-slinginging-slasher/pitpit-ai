@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync, statSync, watch } from 'fs';
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
@@ -138,6 +138,25 @@ async function fetchGithubModels() {
 }
 
 /**
+ * Groq catalog. Its OpenAI-compatible `GET /openai/v1/models` lists model ids; we prefix
+ * them with `groq/` so they route to Groq. Needs the Groq key.
+ */
+async function fetchGroqModels() {
+  const key = readGroqKey();
+  if (!key) throw new Error('No Groq API key set — add it in Settings.');
+  const r = await fetch(`${groqBaseUrl()}/models`, { headers: { Authorization: `Bearer ${key}` } });
+  if (!r.ok) throw new Error(`Groq returned ${r.status}`);
+  const body = (await r.json()) as { data: any[] };
+  return (body.data ?? []).map((m) =>
+    card(`groq/${m.id}`, {
+      name: m.id,
+      context: m.context_window ?? 0,
+      description: m.owned_by ? `owner: ${m.owned_by}` : '',
+    }),
+  );
+}
+
+/**
  * System prompt for the Chat tab — a plain general assistant, NOT a project coder.
  * (The Projects-tab terminal is where the real project-scoped coder/orchestrator lives.)
  */
@@ -242,6 +261,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Groq catalog (prefixed groq/…). Returns { error } if no key / fetch fails.
+    if (req.method === 'GET' && url.pathname === '/api/models/groq') {
+      try {
+        json(res, 200, { models: await fetchGroqModels(), agents: readAgents(), hasKey: !!readGroqKey() });
+      } catch (e: any) {
+        json(res, 200, { models: [], agents: readAgents(), hasKey: !!readGroqKey(), error: e.message });
+      }
+      return;
+    }
+
     // Auth-CLI routers: install + login status (booleans only, never tokens).
     if (req.method === 'GET' && url.pathname === '/api/cli/status') {
       json(res, 200, { clis: cliStatuses(), agents: readAgents() });
@@ -333,6 +362,9 @@ const server = createServer(async (req, res) => {
         hasGithub: !!github,
         githubMasked: maskKey(github),
         githubFromEnv: !!process.env.GITHUB_MODELS_TOKEN,
+        hasGroq: !!readGroqKey(),
+        groqMasked: maskKey(readGroqKey()),
+        groqFromEnv: !!process.env.GROQ_API_KEY,
         hasGemini: !!readGeminiApiKey(),
         geminiMasked: maskKey(readGeminiApiKey()),
         geminiFromEnv: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
@@ -347,12 +379,13 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/settings') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken, geminiApiKey, julesApiKey } = JSON.parse(body || '{}');
+      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken, groqApiKey, geminiApiKey, julesApiKey } = JSON.parse(body || '{}');
       const patch: Record<string, string> = {};
       if (typeof openrouterApiKey === 'string') patch.openrouterApiKey = openrouterApiKey.trim();
       if (typeof databaseUrl === 'string') patch.databaseUrl = databaseUrl.trim();
       if (typeof nvidiaApiKey === 'string') patch.nvidiaApiKey = nvidiaApiKey.trim();
       if (typeof githubToken === 'string') patch.githubToken = githubToken.trim();
+      if (typeof groqApiKey === 'string') patch.groqApiKey = groqApiKey.trim();
       if (typeof geminiApiKey === 'string') patch.geminiApiKey = geminiApiKey.trim();
       if (typeof julesApiKey === 'string') patch.julesApiKey = julesApiKey.trim();
       if (!Object.keys(patch).length) return json(res, 400, { error: 'nothing to save' });
@@ -368,6 +401,8 @@ const server = createServer(async (req, res) => {
         nvidiaMasked: maskKey(readNvidiaKey()),
         hasGithub: !!readGithubToken(),
         githubMasked: maskKey(readGithubToken()),
+        hasGroq: !!readGroqKey(),
+        groqMasked: maskKey(readGroqKey()),
         hasGemini: !!readGeminiApiKey(),
         geminiMasked: maskKey(readGeminiApiKey()),
         hasJules: !!readJulesApiKey(),
@@ -384,6 +419,7 @@ const server = createServer(async (req, res) => {
         databaseUrl: readDatabaseUrl(),
         nvidiaApiKey: readNvidiaKey(),
         githubToken: readGithubToken(),
+        groqApiKey: readGroqKey(),
         geminiApiKey: readGeminiApiKey(),
         julesApiKey: readJulesApiKey(),
       });

@@ -7,8 +7,10 @@ import {
   stripPrefix,
   nvidiaBaseUrl,
   githubBaseUrl,
+  groqBaseUrl,
   readNvidiaKey,
   readGithubToken,
+  readGroqKey,
 } from './config.js';
 import { runLocalAgent, runOpenAICompatibleAgent } from './local-agent.js';
 import { runCliAgent } from './providers/cli-agent.js';
@@ -73,6 +75,14 @@ export async function runAgent(
   if (provider === 'github') {
     return runOpenAICompatibleAgent(
       { baseUrl: githubBaseUrl(), wireModel: stripPrefix(model), apiKey: readGithubToken() },
+      config,
+      input,
+      options,
+    );
+  }
+  if (provider === 'groq') {
+    return runOpenAICompatibleAgent(
+      { baseUrl: groqBaseUrl(), wireModel: stripPrefix(model), apiKey: readGroqKey() },
       config,
       input,
       options,

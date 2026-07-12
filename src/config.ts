@@ -179,6 +179,7 @@ export type ProviderId =
   | 'local'
   | 'nvidia'
   | 'github'
+  | 'groq'
   | 'cli-claude'
   | 'cli-codex'
   | 'cli-gemini'
@@ -190,6 +191,7 @@ export function providerOf(model: string): ProviderId {
   if (model.startsWith('local/')) return 'local';
   if (model.startsWith('nvidia-build/')) return 'nvidia';
   if (model.startsWith('github-models/')) return 'github';
+  if (model.startsWith('groq/')) return 'groq';
   if (model.startsWith('cli/claude')) return 'cli-claude';
   if (model.startsWith('cli/codex')) return 'cli-codex';
   if (model.startsWith('cli/gemini')) return 'cli-gemini';
@@ -241,6 +243,17 @@ export function readGithubToken(): string {
   return process.env.GITHUB_MODELS_TOKEN || readSecrets().githubToken || '';
 }
 
+/** Base URL of the Groq OpenAI-compatible API (no trailing slash). */
+export function groqBaseUrl(): string {
+  const raw = process.env.GROQ_BASE_URL || readSecrets().groqBaseUrl || 'https://api.groq.com/openai/v1';
+  return raw.replace(/\/+$/, '');
+}
+
+/** Resolve the Groq API key: GROQ_API_KEY env overrides the Settings-saved value. */
+export function readGroqKey(): string {
+  return process.env.GROQ_API_KEY || readSecrets().groqApiKey || '';
+}
+
 /**
  * Resolve a Gemini API key (Google AI Studio). Precedence: GEMINI_API_KEY →
  * GOOGLE_API_KEY env → secrets.json `geminiApiKey`. When present, cli/gemini uses the
@@ -277,6 +290,8 @@ export function modelMissingKey(model: string): boolean {
       return !readNvidiaKey();
     case 'github':
       return !readGithubToken();
+    case 'groq':
+      return !readGroqKey();
     default:
       return false; // local + cli/* handle their own auth
   }
