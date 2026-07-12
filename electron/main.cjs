@@ -6,12 +6,38 @@ const { app, BrowserWindow, shell } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
+const fs = require('fs');
+
+/** Locate a real system node.exe on PATH — needed so node-pty (native, built for the
+ * system node ABI) loads. Returns null if none found (then we fall back to Electron-as-node). */
+function findSystemNode() {
+  const exe = process.platform === 'win32' ? 'node.exe' : 'node';
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    const p = path.join(dir, exe);
+    try { if (fs.existsSync(p)) return p; } catch { /* ignore */ }
+  }
+  return null;
+}
 
 const appDir = path.dirname(__dirname); // electron/ -> project root
-const PORT = Number(process.env.CODER_PORT) || 7000;
+// 0 = pick a free port at startup (used when launched directly, e.g. from the Start-menu
+// shortcut). bin/coder.mjs passes a specific CODER_PORT in dev.
+let PORT = Number(process.env.CODER_PORT) || 0;
 const AGENT_CWD = process.env.CODER_CWD || process.cwd(); // the project the agent edits
 
 let serverProc = null;
+
+/** Ask the OS for a free ephemeral port. */
+function freePort() {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, '127.0.0.1', () => {
+      const p = s.address().port;
+      s.close(() => resolve(p));
+    });
+  });
+}
 
 /** Resolve once the port accepts connections, or reject after a timeout. */
 function waitForPort(port, timeoutMs = 20000) {
@@ -31,14 +57,16 @@ function waitForPort(port, timeoutMs = 20000) {
 
 /** Start the web server (tsx) as a plain-Node child, editing AGENT_CWD. */
 async function startServer() {
+  if (!PORT) PORT = await freePort(); // resolve a free port when none was provided
   const tsx = path.join(appDir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
   const server = path.join(appDir, 'web', 'server.ts');
-  // Run the server under SYSTEM node (passed as CODER_NODE by bin/coder.mjs), not
-  // Electron's node: the terminal uses node-pty, a native module built for the system
-  // node ABI. Fall back to Electron-as-node if CODER_NODE is unset.
-  const nodeExe = process.env.CODER_NODE || process.execPath;
+  // Run the server under SYSTEM node so node-pty (native, built for the system node ABI)
+  // loads. Prefer CODER_NODE (dev), else find node on PATH; only as a last resort run the
+  // Electron binary as node (terminals may not work then, but chat still will).
+  const sysNode = process.env.CODER_NODE || findSystemNode();
+  const nodeExe = sysNode || process.execPath;
   const env = { ...process.env, PORT: String(PORT) };
-  if (!process.env.CODER_NODE) env.ELECTRON_RUN_AS_NODE = '1';
+  if (!sysNode) env.ELECTRON_RUN_AS_NODE = '1';
   serverProc = spawn(nodeExe, [tsx, server], { cwd: AGENT_CWD, env, stdio: 'ignore' });
   serverProc.on('exit', () => { serverProc = null; });
   await waitForPort(PORT);
