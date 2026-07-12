@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Global launcher: run `coder` inside any project directory. The agent operates on
+// Global launcher: run `codigo` inside any project directory. The agent operates on
 // that directory (process.cwd()); the model + API key come from the app's shared
-// config. Installed via `npm link` in the app directory.
+// config. Installed via `npm link` in the app directory. (`coder` is a legacy alias.)
 //
-//   coder            -> desktop app (Electron window)
-//   coder cli|tui    -> interactive terminal REPL
-//   coder ui         -> chat web app in the browser (no Electron)
+//   codigo            -> desktop app (Electron window)
+//   codigo cli|tui    -> interactive terminal REPL
+//   codigo ui         -> chat web app in the browser (no Electron)
 //
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -69,7 +69,7 @@ if (REPL.includes(mode)) {
     openBrowser(url);
     process.exit(0);
   }
-  console.log(`Starting Coder web app for ${process.cwd()}`);
+  console.log(`Starting Codigo web app for ${process.cwd()}`);
   console.log(`Opening ${url}  (Ctrl+C to stop)`);
   const server = resolve(appDir, 'web', 'server.ts');
   const child = spawn(process.execPath, [tsx, server], {

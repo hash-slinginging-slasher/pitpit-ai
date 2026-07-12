@@ -1,10 +1,10 @@
 {
-  "$comment": "Windows Terminal fragment: adds a 'Coder' profile with a colored tab + emoji icon.",
-  "$comment2": "Install: copy this file to  %LOCALAPPDATA%\\Microsoft\\Windows Terminal\\Fragments\\coder-cli\\coder.json  then restart Windows Terminal. It appears in the new-tab dropdown as 'Coder'.",
+  "$comment": "Windows Terminal fragment: adds a 'Codigo' profile with a colored tab + emoji icon.",
+  "$comment2": "Install: copy this file to  %LOCALAPPDATA%\\Microsoft\\Windows Terminal\\Fragments\\codigo\\codigo.json  then restart Windows Terminal. It appears in the new-tab dropdown as 'Codigo'.",
   "profiles": [
     {
-      "name": "Coder",
-      "commandline": "cmd.exe /k coder",
+      "name": "Codigo",
+      "commandline": "cmd.exe /k codigo cli",
       "startingDirectory": "D:\\openrouter\\projects",
       "icon": "🤖",
       "tabColor": "#C1447E",

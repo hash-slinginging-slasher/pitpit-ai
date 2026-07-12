@@ -51,7 +51,7 @@ async function createWindow() {
     minWidth: 720,
     minHeight: 480,
     backgroundColor: '#1a1a1a',
-    title: 'Coder',
+    title: 'Codigo',
     icon: path.join(appDir, 'assets', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
@@ -69,14 +69,32 @@ async function createWindow() {
   await win.loadURL(`http://localhost:${PORT}/chat`);
 }
 
+// Single instance: if Codigo is already running, focus/flash that window instead of
+// opening a second app. The second launch acquires no lock and quits immediately.
+app.setName('Codigo');
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    if (process.platform === 'win32') win.flashFrame(true);
+  }
+});
+
 app.whenReady().then(async () => {
-  if (process.platform === 'win32') app.setAppUserModelId('com.pitpit.coder');
+  if (process.platform === 'win32') app.setAppUserModelId('com.pitpit.codigo');
   try {
     await startServer();
   } catch (e) {
     // Surface a minimal error page instead of a blank window.
-    const win = new BrowserWindow({ width: 700, height: 300, backgroundColor: '#1a1a1a', title: 'Coder' });
-    win.loadURL('data:text/html,' + encodeURIComponent(`<body style="background:#1a1a1a;color:#e8e8e8;font-family:sans-serif;padding:30px"><h2>Could not start the Coder server</h2><pre>${e.message}</pre></body>`));
+    const win = new BrowserWindow({ width: 700, height: 300, backgroundColor: '#1a1a1a', title: 'Codigo' });
+    win.loadURL('data:text/html,' + encodeURIComponent(`<body style="background:#1a1a1a;color:#e8e8e8;font-family:sans-serif;padding:30px"><h2>Could not start the Codigo server</h2><pre>${e.message}</pre></body>`));
     return;
   }
   await createWindow();

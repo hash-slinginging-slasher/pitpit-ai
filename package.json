@@ -4,6 +4,7 @@
   "description": "A CLI coding agent on OpenRouter + a web UI to pick which model it uses.",
   "type": "module",
   "bin": {
+    "codigo": "bin/coder.mjs",
     "coder": "bin/coder.mjs"
   },
   "scripts": {
