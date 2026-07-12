@@ -282,10 +282,19 @@
           case "tool_result": events.innerHTML += `<div class="evt">&nbsp;&nbsp;→ ${esc((e.output || "").slice(0, 160))}</div>`; break;
           case "failover": events.innerHTML += `<div class="evt failover">! failing over → ${esc(e.to)} (${esc(e.error || "")})</div>`; break;
           case "continue": if (e.reason === "step-cap") events.innerHTML += `<div class="evt">… ${esc(short(e.model))} hit the step cap — continuing (task not done yet)</div>`; scrollDown(); break;
+          case "plan": {
+            const items = e.steps.map((s, i) => `<div class="evt">${i + 1}. ${esc(s)}</div>`).join("");
+            bubble.insertAdjacentHTML("beforebegin", `<div class="chip">▣ plan · orchestrator: ${esc(e.orchestrator)}</div><div class="events">${items}</div>`);
+            scrollDown(); break;
+          }
+          case "step":
+            if (e.phase === "start") events.innerHTML += `<div class="evt"><span class="tool">▶ step ${e.index + 1}/${e.total}</span> ${esc(e.title)}</div>`;
+            else events.innerHTML += `<div class="evt${e.phase === "failed" ? " failover" : ""}">${e.phase === "failed" ? "✗" : "✓"} step ${e.index + 1}${e.note ? " — " + esc(e.note) : ""}</div>`;
+            scrollDown(); break;
           case "skills": bubble.insertAdjacentHTML("beforebegin", e.skills.map((s) => `<span class="chip">skill: ${esc(s)}</span>`).join("")); break;
           case "files": bubble.insertAdjacentHTML("beforebegin", e.files.map((f) => `<span class="chip">📎 ${esc(f)}</span>`).join("")); break;
           case "session": sessionId = e.sessionId; loadRecents(); break;
-          case "done": { const u = e.usage || {}; const via = e.failedOver ? `via ${short(e.model)} · ` : ""; usageEl.textContent = `${via}${u.inputTokens ?? 0} in · ${u.outputTokens ?? 0} out`; if (e.sessionId) sessionId = e.sessionId; break; }
+          case "done": { const u = e.usage || {}; const via = e.failedOver ? `via ${short(e.model)} · ` : ""; usageEl.textContent = `${via}${u.inputTokens ?? 0} in · ${u.outputTokens ?? 0} out`; if (e.sessionId) sessionId = e.sessionId; if (e.text) ctx.setText(e.text); break; }
           case "stopped": events.innerHTML += `<div class="evt failover">stopped</div>`; break;
           case "error": events.innerHTML += `<div class="evt failover">error: ${esc(e.message)}</div>`; break;
         }

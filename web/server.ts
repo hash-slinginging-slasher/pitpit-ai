@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, type ChatMessage } from '../src/agent.js';
+import { runOrchestrated } from '../src/orchestrator.js';
 import { loadSkillsFor, skillIndex } from '../src/skills.js';
 import { resolveMentions } from '../src/mentions.js';
 import { WebSocketServer } from 'ws';
@@ -482,13 +483,18 @@ const server = createServer(async (req, res) => {
           }
         }
 
-        const fullMessages: ChatMessage[] = [...history, { role: 'user', content: resolved.text }];
-        const result = await runResilientChain(config, chain, fullMessages.length > 1 ? fullMessages : resolved.text, {
+        const handlers = {
           signal: ac.signal,
-          onEvent: (e) => send(e),
-          onFailover: ({ to, index, error }) => send({ type: 'failover', to, index, error }),
-          onContinue: ({ model, reason }) => send({ type: 'continue', model, reason }),
-        });
+          onEvent: (e: any) => send(e),
+          onFailover: ({ to, index, error }: { to: string; index: number; error: string }) => send({ type: 'failover', to, index, error }),
+          onContinue: ({ model, reason }: { model: string; reason: string }) => send({ type: 'continue', model, reason }),
+        };
+        // If an orchestrator model is configured, it plans + delegates; else run coders directly.
+        const orchestratorChain = readAgents().orchestrator;
+        const fullMessages: ChatMessage[] = [...history, { role: 'user', content: resolved.text }];
+        const result = orchestratorChain.length
+          ? await runOrchestrated(config, orchestratorChain, chain, resolved.text, handlers)
+          : await runResilientChain(config, chain, fullMessages.length > 1 ? fullMessages : resolved.text, handlers);
 
         if (dbConfigured() && sessionId != null) {
           await addMessage(sessionId, 'assistant', result.text).catch(() => {});

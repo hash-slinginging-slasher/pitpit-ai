@@ -3,6 +3,7 @@ import { watch, readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
 import { loadConfig, readAgents, updateConfigFile, providerOf, CONFIG_PATH, type AgentConfig } from './config.js';
 import { runAgentChain, runResilientChain, isAbortError, type ChatMessage, type AgentEvent } from './agent.js';
+import { runOrchestrated } from './orchestrator.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
 import { hasGit, isRepo, initRepo, commitAll, recentCommits } from './git.js';
@@ -818,23 +819,40 @@ async function main() {
     console.log(`  ${C.dim}(Esc to stop)${C.reset}`);
     try {
       const agentInput = isInit ? turnContent : messages.length > 1 ? messages : turnContent;
-      const result = await runResilientChain(config, activeChain, agentInput, {
+      // If an orchestrator model is configured, it plans the task and delegates to the
+      // coder chain; otherwise the coder chain runs directly (resiliently).
+      const orchestratorChain = readAgents().orchestrator;
+      const useOrchestrator = orchestratorChain.length > 0 && !isInit;
+      const sharedHandlers = {
         signal: activeAbort.signal,
-        onEvent: (e) => {
+        onEvent: (e: AgentEvent) => {
+          if (e.type === 'plan') {
+            console.log(`\n  ${C.magenta}▣ plan${C.reset} ${C.dim}(orchestrator: ${shortName(e.orchestrator)})${C.reset}`);
+            e.steps.forEach((s, i) => console.log(`  ${C.dim}${i + 1}.${C.reset} ${s}`));
+            return;
+          }
+          if (e.type === 'step') {
+            if (e.phase === 'start') console.log(`\n  ${C.cyan}▶ step ${e.index + 1}/${e.total}${C.reset} ${C.dim}${e.title}${C.reset}`);
+            else console.log(`  ${e.phase === 'failed' ? `${C.yellow}✗` : `${C.green}✓`} step ${e.index + 1}${C.reset}${e.note ? ` ${C.dim}${e.note}${C.reset}` : ''}`);
+            return;
+          }
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
           renderer.handle(e);
         },
-        onFailover: ({ to, index, error }) =>
+        onFailover: ({ to, index, error }: { to: string; index: number; error: string }) =>
           console.log(
             // index is the source's 1-based position in the active sub-chain; offset it
             // by activeIndex to show the absolute coder number.
             `\n${C.yellow}  ! coder ${activeIndex + index} failing over -> ${shortName(to)}${C.reset} ${C.dim}(${error})${C.reset}`,
           ),
-        onContinue: ({ model, reason }) => {
+        onContinue: ({ model, reason }: { model: string; reason: 'step-cap' | 'handoff' }) => {
           if (reason === 'step-cap')
             console.log(`\n${C.dim}  … ${shortName(model)} hit the step cap — continuing the task (not done yet)${C.reset}`);
         },
-      });
+      };
+      const result = useOrchestrator
+        ? await runOrchestrated(config, orchestratorChain, activeChain, turnContent, sharedHandlers)
+        : await runResilientChain(config, activeChain, agentInput, sharedHandlers);
       renderer.done();
       if (isInit) {
         const ok = rebuildSystemPrompt();
@@ -842,6 +860,9 @@ async function main() {
           `\n${C.green}[ok]${C.reset} ${ok ? `${CONTEXT_FILE} written and loaded as context.` : `Done (no ${CONTEXT_FILE} found - did the model write it?).`}`,
         );
       } else {
+        // Orchestration builds its summary (ledger) after the run, so it wasn't streamed —
+        // print it. Coder-only runs already streamed their text, so don't double-print.
+        if (useOrchestrator && result.text) console.log(`\n${result.text}\n`);
         messages.push({ role: 'assistant', content: result.text });
         await log('assistant', result.text);
         memoryDirty = true; // new exchange worth folding into project memory
