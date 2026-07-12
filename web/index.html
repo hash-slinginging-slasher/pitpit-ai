@@ -574,16 +574,25 @@
         const q = $("search").value.trim().toLowerCase();
         const freeOnly = $("freeOnly").checked;
         const def = agentDef();
-        // The modality filter only makes sense for OpenRouter (it has modality metadata).
-        // Other catalogs lack it, so show everything and let the user judge.
-        const applyAgentFilter = source === "openrouter";
+        // Image/Doc are capability-restricted (image OUTPUT / file INPUT), so filter by
+        // modality across ALL sources — a "vision" model reads images, it doesn't generate
+        // them, so it must not appear under Image Agents. Coder/Orchestrator accept anything.
+        const restrictive = activeTab === "image" || activeTab === "doc";
         const list = models.filter((m) => {
-          if (applyAgentFilter && !def.filter(m)) return false;
+          if (restrictive && !def.filter(m)) return false;
           if (freeOnly && (m.promptPrice || m.completionPrice)) return false;
           if (!q) return true;
           return (m.id + " " + (m.name || "")).toLowerCase().includes(q);
         });
-        $("count").textContent = `${list.length} ${sourceDef().label} models${applyAgentFilter ? " for " + def.label : ""}`;
+        $("count").textContent = `${list.length} ${sourceDef().label} models${restrictive ? " for " + def.label : ""}`;
+        if (!list.length && restrictive && !q) {
+          const why = activeTab === "image" ? "that generate images (output an image)" : "that accept files (pdf / csv / xlsx)";
+          const tip = activeTab === "image"
+            ? "Image generators live mainly on OpenRouter (e.g. Google's image models). Vision models only read images."
+            : "Try OpenRouter, or add a model by id below.";
+          $("grid").innerHTML = `<div class="chain-empty" style="grid-column:1/-1">No ${sourceDef().label} models ${why}. ${tip}</div>`;
+          return;
+        }
         $("grid").innerHTML = list
           .map((m) => {
             const isFree = !m.promptPrice && !m.completionPrice;
