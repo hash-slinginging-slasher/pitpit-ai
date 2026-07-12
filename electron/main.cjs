@@ -2,7 +2,7 @@
 // Launched by `coder` (see bin/coder.mjs), which passes CODER_CWD (the folder the
 // agent should edit) and CODER_PORT (a free port) via the environment. This process
 // starts the existing web server as a child, then opens a window at /chat.
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -82,7 +82,11 @@ async function createWindow() {
     title: 'Codigo',
     icon: path.join(appDir, 'assets', 'icon.png'),
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+    },
   });
 
   // Allow clipboard read/write so the terminal's Ctrl+V / right-click paste works.
@@ -118,6 +122,14 @@ app.on('second-instance', () => {
     win.focus();
     if (process.platform === 'win32') win.flashFrame(true);
   }
+});
+
+// Relaunch the whole app (triggered by the Relaunch button via preload). Drop CODER_PORT
+// so the fresh instance picks a new free port instead of racing the exiting server.
+ipcMain.on('codigo:relaunch', () => {
+  delete process.env.CODER_PORT;
+  app.relaunch();
+  app.exit(0);
 });
 
 app.whenReady().then(async () => {

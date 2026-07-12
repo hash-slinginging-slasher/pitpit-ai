@@ -134,6 +134,7 @@
       <button class="tabbtn active" data-tab="chat">Chat</button>
       <button class="tabbtn" data-tab="projects">Projects</button>
       <span class="spacer"></span>
+      <button class="tabbtn" id="relaunchBtn" title="Relaunch Codigo">⟳ Relaunch</button>
       <button class="tabbtn" data-tab="settings">⚙ Models &amp; settings</button>
     </div>
 
@@ -226,7 +227,15 @@
         if (name === "settings") { const f = $("settingsFrame"); if (f.src === "about:blank" || !f.src) f.src = "/"; }
         if (name === "chat") loadModel(); // reflect any model changes made in settings
       }
-      document.querySelectorAll(".tabbtn").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+      document.querySelectorAll(".tabbtn[data-tab]").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+      // Relaunch: restart the whole app in Electron, or reload the page in the browser.
+      $("relaunchBtn").onclick = () => {
+        if (window.codigo && window.codigo.relaunch) {
+          if (confirm("Relaunch Codigo? Running terminals will be closed.")) window.codigo.relaunch();
+        } else {
+          location.reload();
+        }
+      };
 
       // ---------- tiny markdown ----------
       function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
