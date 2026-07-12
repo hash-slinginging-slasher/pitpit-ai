@@ -134,18 +134,33 @@ export function readSecrets(): Record<string, string> {
   return {};
 }
 
-/** Merge and persist secrets written from the Settings UI. */
-export function saveSecrets(patch: Record<string, string>): void {
+/** Merge and persist secrets written from the Settings UI. Values may be arrays (e.g. multiple keys). */
+export function saveSecrets(patch: Record<string, unknown>): void {
   const next = { ...readSecrets(), ...patch };
   writeFileAtomic(SECRETS_PATH, JSON.stringify(next, null, 2) + '\n');
 }
 
 /**
- * Resolve the OpenRouter API key. Precedence: OPENROUTER_API_KEY env var (if set)
- * overrides, otherwise the key saved via the Settings UI (secrets.json).
+ * Resolve ALL configured OpenRouter API keys, in try-order. The runtime rotates through
+ * these when one is rate-limited / out of credit (see runAgent). Precedence:
+ * OPENROUTER_API_KEY env var first (if set), then the keys saved via the Settings UI —
+ * the `openrouterApiKeys` array when present, else the legacy single `openrouterApiKey`.
+ * Deduped, trimmed, empties removed.
  */
+export function readApiKeys(): string[] {
+  const s = readSecrets() as { openrouterApiKey?: string; openrouterApiKeys?: unknown };
+  const stored = Array.isArray(s.openrouterApiKeys)
+    ? (s.openrouterApiKeys as unknown[]).map(String)
+    : s.openrouterApiKey
+      ? [s.openrouterApiKey]
+      : [];
+  const env = process.env.OPENROUTER_API_KEY ? [process.env.OPENROUTER_API_KEY] : [];
+  return [...new Set([...env, ...stored].map((k) => (k || '').trim()).filter(Boolean))];
+}
+
+/** The primary OpenRouter API key (first in try-order). Empty string if none configured. */
 export function readApiKey(): string {
-  return process.env.OPENROUTER_API_KEY || readSecrets().openrouterApiKey || '';
+  return readApiKeys()[0] || '';
 }
 
 /** Resolve the Postgres connection string: DATABASE_URL env overrides the Settings-saved value. */

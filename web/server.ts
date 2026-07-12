@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync, statSync, watch } from 'fs';
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readApiKeys, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
@@ -371,12 +371,15 @@ const server = createServer(async (req, res) => {
     // Settings: report what's configured (masked only — never send secrets in full).
     if (req.method === 'GET' && url.pathname === '/api/settings') {
       const key = apiKeyNow();
+      const orKeys = readApiKeys();
       const dbUrl = readDatabaseUrl();
       const nvidia = readNvidiaKey();
       const github = readGithubToken();
       json(res, 200, {
         hasKey: !!key,
         keyMasked: maskKey(key),
+        keyCount: orKeys.length,
+        keysMasked: orKeys.map(maskKey),
         fromEnv: !!process.env.OPENROUTER_API_KEY,
         hasDb: !!dbUrl,
         dbMasked: maskDbUrl(dbUrl),
@@ -406,9 +409,18 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/settings') {
       let body = '';
       for await (const chunk of req) body += chunk;
-      const { openrouterApiKey, databaseUrl, nvidiaApiKey, githubToken, groqApiKey, geminiApiKey, julesApiKey, embeddingModel: embedModelInput } = JSON.parse(body || '{}');
-      const patch: Record<string, string> = {};
-      if (typeof openrouterApiKey === 'string') patch.openrouterApiKey = openrouterApiKey.trim();
+      const { openrouterApiKey, openrouterApiKeys, databaseUrl, nvidiaApiKey, githubToken, groqApiKey, geminiApiKey, julesApiKey, embeddingModel: embedModelInput } = JSON.parse(body || '{}');
+      const patch: Record<string, unknown> = {};
+      // Multiple OpenRouter keys (rotated on rate-limit). Store the array + mirror the first
+      // into the legacy single field so older readers still work.
+      if (Array.isArray(openrouterApiKeys)) {
+        const list = [...new Set(openrouterApiKeys.map((k: unknown) => String(k || '').trim()).filter(Boolean))];
+        patch.openrouterApiKeys = list;
+        patch.openrouterApiKey = list[0] ?? '';
+      } else if (typeof openrouterApiKey === 'string') {
+        patch.openrouterApiKey = openrouterApiKey.trim();
+        patch.openrouterApiKeys = openrouterApiKey.trim() ? [openrouterApiKey.trim()] : [];
+      }
       if (typeof databaseUrl === 'string') patch.databaseUrl = databaseUrl.trim();
       if (typeof nvidiaApiKey === 'string') patch.nvidiaApiKey = nvidiaApiKey.trim();
       if (typeof githubToken === 'string') patch.githubToken = githubToken.trim();
@@ -423,6 +435,8 @@ const server = createServer(async (req, res) => {
         ok: true,
         hasKey: !!key,
         keyMasked: maskKey(key),
+        keyCount: readApiKeys().length,
+        keysMasked: readApiKeys().map(maskKey),
         hasDb: !!readDatabaseUrl(),
         dbMasked: maskDbUrl(readDatabaseUrl()),
         hasNvidia: !!readNvidiaKey(),
@@ -444,6 +458,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/settings/reveal') {
       json(res, 200, {
         openrouterApiKey: apiKeyNow(),
+        openrouterApiKeys: readApiKeys(),
         databaseUrl: readDatabaseUrl(),
         nvidiaApiKey: readNvidiaKey(),
         githubToken: readGithubToken(),

@@ -213,9 +213,10 @@
         <p>Your OpenRouter API key is stored locally in <code>secrets.json</code> and used by both the model list and the CLI. It never leaves your machine.</p>
         <div class="keys-grid">
           <div class="field">
-            <label for="keyInput">OpenRouter API key</label>
+            <label for="keyInput">OpenRouter API key <span id="orKeyCount" style="color:var(--dim); font-weight:400;"></span></label>
             <input id="keyInput" type="password" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false" />
-            <div class="show-key"><label><input type="checkbox" id="showKey" /> show</label><button id="copyKey" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="copyKeyStatus"></span></div>
+            <div class="show-key"><label><input type="checkbox" id="showKey" /> show</label><button id="copyKey" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><button id="addOrKey" class="btn-ghost" style="margin:0;padding:3px 9px;" title="Add a fallback OpenRouter key — used automatically when the one above is rate-limited or out of credit">+ add key</button><span id="copyKeyStatus"></span></div>
+            <div id="orExtraKeys"></div>
           </div>
           <div class="field">
             <label for="nvidiaInput">NVIDIA build API key <span style="color:var(--dim)">(<code>nvidia-build/…</code>)</span></label>
@@ -756,9 +757,48 @@
         else { el.textContent = "⚠ expected " + f.prefixes.join(" or ") + "…"; el.style.color = "var(--warn)"; }
       }
 
+      // --- OpenRouter fallback keys (rotated on rate-limit) ---
+      let orDirty = false; // true once the user adds/removes/edits any OpenRouter key row
+      // Build one fallback-key row. `masked`/`oidx` given when loading an existing stored key
+      // (shown as a mask, resolved to its real value on save); omitted for a fresh row.
+      function addExtraKeyRow(masked, oidx) {
+        const row = document.createElement("div");
+        row.className = "or-extra";
+        row.style.cssText = "margin-top:6px; display:flex; gap:6px; align-items:center;";
+        if (oidx !== undefined) row.dataset.oidx = String(oidx);
+        const inp = document.createElement("input");
+        inp.type = masked ? "text" : "password";
+        inp.placeholder = "sk-or-v1-… (fallback)";
+        inp.autocomplete = "off"; inp.spellcheck = false;
+        inp.style.flex = "1";
+        if (masked) { inp.value = masked; inp.dataset.masked = "1"; }
+        inp.dataset.edited = "";
+        inp.addEventListener("focus", () => { if (inp.dataset.masked === "1") inp.select(); });
+        inp.addEventListener("input", () => { inp.dataset.masked = ""; inp.dataset.edited = "1"; orDirty = true; });
+        const rm = document.createElement("button");
+        rm.className = "btn-ghost"; rm.textContent = "×"; rm.title = "Remove this key";
+        rm.style.cssText = "margin:0; padding:3px 10px;";
+        rm.addEventListener("click", () => { row.remove(); orDirty = true; updateOrKeyCount(); });
+        row.appendChild(inp); row.appendChild(rm);
+        $("orExtraKeys").appendChild(row);
+        return inp;
+      }
+      function orRowCount() { return 1 + $("orExtraKeys").querySelectorAll(".or-extra").length; }
+      function updateOrKeyCount() {
+        const n = orRowCount();
+        $("orKeyCount").textContent = n > 1 ? `(${n} keys · rotate on rate-limit)` : "";
+      }
+      function renderOrExtraKeys(keysMasked) {
+        $("orExtraKeys").innerHTML = "";
+        (keysMasked || []).slice(1).forEach((m, i) => addExtraKeyRow(m, i + 1));
+        orDirty = false;
+        updateOrKeyCount();
+      }
+
       async function loadSettings() {
         try {
           const s = await (await fetch("/api/settings")).json();
+          renderOrExtraKeys(s.keysMasked);
           keyIsSet = s.hasKey;
           reflectKeyState();
           $("settingsStatus").textContent = "";
@@ -798,8 +838,25 @@
         // masked display value, which must NEVER be saved back as the real key.
         const payload = {};
         KEY_FIELDS.forEach((f) => {
+          if (f.payload === "openrouterApiKey") return; // handled below as an array (primary + fallbacks)
           if ($(f.input).dataset.edited === "1") payload[f.payload] = $(f.input).value.trim();
         });
+        // OpenRouter: primary (#keyInput) + fallback rows → one array. Resolve any un-edited
+        // masked field to its real stored value (via reveal) so a mask is never saved back.
+        if ($("keyInput").dataset.edited === "1" || orDirty) {
+          const rows = [{ inp: $("keyInput"), oidx: "0" }].concat(
+            [...$("orExtraKeys").querySelectorAll(".or-extra")].map((r) => ({ inp: r.querySelector("input"), oidx: r.dataset.oidx })),
+          );
+          const needReveal = rows.some((r) => r.inp.dataset.edited !== "1" && r.oidx !== undefined && r.oidx !== "");
+          let realArr = [];
+          if (needReveal) { const rv = await reveal(); realArr = rv.openrouterApiKeys || (rv.openrouterApiKey ? [rv.openrouterApiKey] : []); }
+          const list = [];
+          for (const r of rows) {
+            if (r.inp.dataset.edited === "1") { const v = r.inp.value.trim(); if (v) list.push(v); }
+            else if (r.oidx !== undefined && r.oidx !== "") { const v = (realArr[+r.oidx] || "").trim(); if (v) list.push(v); }
+          }
+          payload.openrouterApiKeys = [...new Set(list)];
+        }
         const dbUrl = $("dbInput").value.trim();
         if (dbUrl) payload.databaseUrl = dbUrl;
         const embed = $("embedInput").value.trim();
@@ -842,6 +899,7 @@
       $("openSettings").addEventListener("click", openSettings);
       $("closeSettings").addEventListener("click", closeSettings);
       $("saveSettings").addEventListener("click", saveSettings);
+      $("addOrKey").addEventListener("click", () => { const inp = addExtraKeyRow(); orDirty = true; updateOrKeyCount(); inp.focus(); });
       $("testDb").addEventListener("click", testDb);
       // Wire all provider key fields uniformly: focus selects the mask, typing marks the
       // field edited (and hides the real key unless "show" is on), show reveals/restores,

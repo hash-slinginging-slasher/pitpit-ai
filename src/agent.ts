@@ -11,6 +11,7 @@ import {
   readNvidiaKey,
   readGithubToken,
   readGroqKey,
+  readApiKeys,
 } from './config.js';
 import { runLocalAgent, runOpenAICompatibleAgent } from './local-agent.js';
 import { runCliAgent } from './providers/cli-agent.js';
@@ -49,6 +50,19 @@ export function isAbortError(err: any, signal?: AbortSignal): boolean {
 export function needsUserAction(message: string): boolean {
   return /rate.?limit|add .*credit|api key|no .*key|quota|insufficient|unauthoriz|payment|sign in|log ?in|402|401|429/i.test(
     message || '',
+  );
+}
+
+/**
+ * True if an OpenRouter failure is the KEY's fault (rate-limited / out of credit / bad key)
+ * rather than the model's — i.e. a different key might succeed. Used to rotate through
+ * multiple configured OpenRouter keys before giving up on the model and failing over.
+ */
+function isKeyExhausted(err: any): boolean {
+  const s = err?.status ?? err?.statusCode;
+  if (s === 401 || s === 402 || s === 429) return true;
+  return /rate.?limit|quota|insufficient|add .*credit|payment required|unauthoriz|invalid api key/i.test(
+    err?.message || '',
   );
 }
 
@@ -92,7 +106,48 @@ export async function runAgent(
     return runCliAgent(provider, config, model, input, options);
   }
 
-  const client = new OpenRouter({ apiKey: config.apiKey });
+  // OpenRouter: try each configured key in order, rotating to the next when one is
+  // rate-limited / out of credit (a key problem, not a model problem). Only rotate before
+  // any text has streamed — once the model has emitted output, retrying would duplicate it.
+  const keys = readApiKeys();
+  const keyList = keys.length ? keys : [config.apiKey];
+  let streamedAny = false;
+  const rotOptions: RunOptions | undefined = options?.onEvent
+    ? {
+        ...options,
+        onEvent: (e: AgentEvent) => {
+          if (e.type === 'text' || e.type === 'reasoning') streamedAny = true;
+          options.onEvent!(e);
+        },
+      }
+    : options;
+  let lastErr: any;
+  for (let ki = 0; ki < keyList.length; ki++) {
+    streamedAny = false;
+    try {
+      return await runOpenRouterModel(keyList[ki], config, model, input, rotOptions);
+    } catch (err: any) {
+      lastErr = err;
+      if (isAbortError(err, options?.signal)) throw err;
+      const canRotate = ki < keyList.length - 1 && !streamedAny && isKeyExhausted(err);
+      if (!canRotate) throw err;
+      console.warn(
+        `[openrouter] key ${ki + 1}/${keyList.length} exhausted (${err?.status ?? ''} ${String(err?.message ?? '').slice(0, 80)}); trying next key`,
+      );
+    }
+  }
+  throw lastErr;
+}
+
+/** Run one OpenRouter model with a specific API key. Extracted so runAgent can rotate keys. */
+async function runOpenRouterModel(
+  apiKey: string,
+  config: AgentConfig,
+  model: string,
+  input: string | ChatMessage[],
+  options?: RunOptions,
+) {
+  const client = new OpenRouter({ apiKey });
 
   const result = client.callModel({
     model,
