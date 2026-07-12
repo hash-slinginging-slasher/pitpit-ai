@@ -252,6 +252,18 @@
       </div>
     </div>
 
+    <!-- In-app text prompt (Electron doesn't support window.prompt) -->
+    <div id="nameModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:60; align-items:center; justify-content:center;">
+      <div style="background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px; width:min(400px,90vw);">
+        <div id="nameModalLabel" style="font-size:13px; margin-bottom:10px; color:var(--text);"></div>
+        <input id="nameModalInput" style="width:100%; padding:9px 11px; background:var(--bg); border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:13px; outline:none;" spellcheck="false" />
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
+          <button id="nameModalCancel" style="background:var(--panel2); color:var(--dim); border:1px solid var(--border); border-radius:7px; padding:6px 14px; cursor:pointer;">Cancel</button>
+          <button id="nameModalOk" style="background:var(--accent); color:#fff; border:none; border-radius:7px; padding:6px 16px; cursor:pointer;">Create</button>
+        </div>
+      </div>
+    </div>
+
     <script src="/vendor/xterm.js"></script>
     <script src="/vendor/addon-fit.js"></script>
     <script>
@@ -784,8 +796,20 @@
           loadBrainNotes();
         } catch (e) {}
       };
-      function newBrainNote(preset) {
-        const raw = preset || prompt('New note name — use "/" for folders, e.g. decisions/rate-limits:', "");
+      // In-app prompt (works in Electron, unlike window.prompt).
+      function askText(label, def = "") {
+        return new Promise((resolve) => {
+          const modal = $("nameModal"), input = $("nameModalInput");
+          $("nameModalLabel").textContent = label; input.value = def;
+          modal.style.display = "flex"; setTimeout(() => input.focus(), 30);
+          const done = (val) => { modal.style.display = "none"; $("nameModalOk").onclick = null; $("nameModalCancel").onclick = null; input.onkeydown = null; resolve(val); };
+          $("nameModalOk").onclick = () => done(input.value);
+          $("nameModalCancel").onclick = () => done(null);
+          input.onkeydown = (e) => { if (e.key === "Enter") done(input.value); else if (e.key === "Escape") done(null); };
+        });
+      }
+      async function newBrainNote(preset) {
+        const raw = preset != null ? preset : await askText('New note name — use "/" for folders, e.g. decisions/rate-limits');
         const name = (raw || "").split("/").map((s) => s.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase()).filter(Boolean).join("/");
         if (!name) return;
         if (!brainNotesData.some((n) => n.name === name)) brainNotesData.push({ name, content: "# " + name.split("/").pop() + "\n\n" });

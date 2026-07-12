@@ -2,7 +2,7 @@
 // Launched by `coder` (see bin/coder.mjs), which passes CODER_CWD (the folder the
 // agent should edit) and CODER_PORT (a free port) via the environment. This process
 // starts the existing web server as a child, then opens a window at /chat.
-const { app, BrowserWindow, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, Menu } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -81,7 +81,7 @@ async function createWindow() {
     backgroundColor: '#1a1a1a',
     title: 'Codigo',
     icon: path.join(appDir, 'assets', 'icon.png'),
-    autoHideMenuBar: true,
+    autoHideMenuBar: false, // show the File/Edit/View menu (DevTools, Reload, copy/paste)
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -132,8 +132,35 @@ ipcMain.on('codigo:relaunch', () => {
   app.exit(0);
 });
 
+/** App menu: File / Edit (cut-copy-paste) / View (Reload + DevTools + zoom) / Window. */
+function buildMenu() {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { label: 'File', submenu: [{ role: 'quit' }] },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+          { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+        ],
+      },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' },
+          { type: 'separator' },
+          { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+          { type: 'separator' }, { role: 'togglefullscreen' },
+        ],
+      },
+      { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] },
+    ]),
+  );
+}
+
 app.whenReady().then(async () => {
   if (process.platform === 'win32') app.setAppUserModelId('com.pitpit.codigo');
+  buildMenu();
   try {
     await startServer();
   } catch (e) {
