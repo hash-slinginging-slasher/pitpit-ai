@@ -202,7 +202,7 @@
       </div>
     </header>
     <main>
-      <div id="testStatus" style="display:none; margin:8px 0; padding:8px 12px; border-radius:8px; font-size:13px;"></div>
+      <div id="testStatus" style="display:none; position:fixed; bottom:18px; right:18px; z-index:60; max-width:440px; padding:10px 14px; border-radius:10px; font-size:13px; box-shadow:0 6px 24px rgba(0,0,0,0.4); line-height:1.5;"></div>
       <div class="count" id="count"></div>
       <div class="grid" id="grid"></div>
       <div class="state" id="state">Loading models…</div>
@@ -348,22 +348,22 @@
 
       // Show a transient status banner above the grid. kind: "" | "good" | "warn".
       let testStatusTimer = null;
-      function showTestStatus(html, kind) {
+      // dismissable: show a × so the toast can be closed; persistent results stay until dismissed
+      // or replaced by the next test (only the transient "testing…" state auto-clears on result).
+      function showTestStatus(html, kind, dismissable) {
         const el = $("testStatus");
         el.style.display = "block";
-        el.innerHTML = html;
+        const x = dismissable ? `<button id="testStatusX" style="float:right;margin:-2px -4px 0 10px;background:none;border:none;color:inherit;cursor:pointer;font-size:15px;opacity:.7;">×</button>` : "";
+        el.innerHTML = x + html;
         const styles = {
-          good: ["rgba(30,90,60,0.22)", "#2e7d52", "#7fe6a1"],
-          warn: ["rgba(90,45,20,0.22)", "#8a4a2a", "#ff9b6b"],
-          "": ["rgba(40,60,80,0.22)", "#2a4a63", "#9fb3c8"],
+          good: ["rgba(20,70,45,0.96)", "#2e7d52", "#8ff0b0"],
+          warn: ["rgba(70,35,15,0.96)", "#8a4a2a", "#ffb08a"],
+          "": ["rgba(30,44,60,0.96)", "#2a4a63", "#bcd0e4"],
         };
         const [bg, border, fg] = styles[kind || ""] || styles[""];
         el.style.background = bg; el.style.border = "1px solid " + border; el.style.color = fg;
+        const xb = $("testStatusX"); if (xb) xb.onclick = () => { el.style.display = "none"; };
         if (testStatusTimer) clearTimeout(testStatusTimer);
-      }
-      function hideTestStatusLater(ms) {
-        if (testStatusTimer) clearTimeout(testStatusTimer);
-        testStatusTimer = setTimeout(() => { $("testStatus").style.display = "none"; }, ms);
       }
       const shortId = (id) => (id || "").length > 48 ? id.slice(0, 45) + "…" : id;
 
@@ -380,8 +380,7 @@
         } catch (e) { r = { ok: false, error: e.message }; }
         if (btn) { btn.disabled = false; btn.textContent = label; }
         if (r.ok) {
-          showTestStatus(`✅ <b>${shortId(id)}</b> works${r.latencyMs ? ` (${r.latencyMs} ms)` : ""} — added to ${agentDef().label}.`, "good");
-          hideTestStatusLater(4000);
+          showTestStatus(`✅ Test passed — <b>${shortId(id)}</b> works${r.latencyMs ? ` (${r.latencyMs} ms)` : ""}${r.reply ? `, replied “${(r.reply || "").replace(/</g, "&lt;")}”` : ""}. Added to ${agentDef().label}.`, "good", true);
           addToChain(kind, id); // re-renders the chain + grid
         } else {
           const safe = (r.error || "unknown error").replace(/</g, "&lt;");
@@ -389,9 +388,10 @@
             `⚠ <b>${shortId(id)}</b> test failed: ${safe} ` +
               `<button id="addAnyway" class="btn-ghost" style="margin-left:8px;padding:2px 8px;">Add anyway</button>`,
             "warn",
+            true,
           );
           const anyway = $("addAnyway");
-          if (anyway) anyway.onclick = () => { addToChain(kind, id); showTestStatus(`Added <b>${shortId(id)}</b> (untested).`, ""); hideTestStatusLater(3000); };
+          if (anyway) anyway.onclick = () => { addToChain(kind, id); showTestStatus(`Added <b>${shortId(id)}</b> (untested).`, "", true); };
         }
       }
       const removeFromChain = (kind, id) => saveChain(kind, agents[kind].filter((m) => m !== id));
