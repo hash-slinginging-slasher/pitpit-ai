@@ -415,16 +415,23 @@
         const ctx = { bubble: asst.querySelector(".bubble"), events: asst.querySelector(".events"), usageEl: asst.querySelector(".usage"), _t: "", setText(t){this._t=t;}, getText(){return this._t;} };
         aborter = new AbortController(); setRunning(true);
         try {
-          const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history, sessionId }), signal: aborter.signal });
-          const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
-          for (;;) {
-            const { value, done } = await reader.read(); if (done) break;
-            buf += dec.decode(value, { stream: true });
-            const chunks = buf.split("\n\n"); buf = chunks.pop();
-            for (const c of chunks) {
-              const line = c.replace(/^data: /, "").trim(); if (!line) continue;
-              let e; try { e = JSON.parse(line); } catch { continue; }
-              handleEvent(e, ctx);
+          // Pass the currently-selected project so "@orchestrator <msg>" can reason about that
+          // project's Kanban board. Ignored for normal (general) chat messages.
+          const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, history, sessionId, cwd: activeCwd }), signal: aborter.signal });
+          if (!res.ok) {
+            let msg = "request failed"; try { msg = (await res.json()).error || msg; } catch {}
+            ctx.bubble.innerHTML = `<span style="color:var(--warn)">${esc(msg)}</span>`;
+          } else {
+            const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+            for (;;) {
+              const { value, done } = await reader.read(); if (done) break;
+              buf += dec.decode(value, { stream: true });
+              const chunks = buf.split("\n\n"); buf = chunks.pop();
+              for (const c of chunks) {
+                const line = c.replace(/^data: /, "").trim(); if (!line) continue;
+                let e; try { e = JSON.parse(line); } catch { continue; }
+                handleEvent(e, ctx);
+              }
             }
           }
         } catch (err) {

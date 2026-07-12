@@ -39,6 +39,33 @@ export interface OrchestrateOptions extends RunOptions {
 
 const shortName = (m: string) => (m || '').split('/').pop() || m;
 
+/**
+ * System prompt for a DIRECT "@orchestrator" conversation — the user talking to the scrum
+ * master to ask about status/priorities, not kicking off a plan/execute run.
+ */
+export const ORCHESTRATOR_CHAT_SYSTEM = [
+  'You are the ORCHESTRATOR (scrum master) for this project. The user is addressing you directly.',
+  'Answer their question conversationally and concisely, grounded in the Kanban board state and',
+  'project brain provided to you. You may assess progress, flag problems (e.g. junk, duplicate, or',
+  'stale cards), recommend what to do next, and suggest reprioritizing. Do NOT write code or call',
+  'tools — respond as the planner/manager. If the board looks corrupted or bloated, say so and',
+  'suggest running "/board clean" or "/board clear".',
+].join(' ');
+
+/** Build the board + brain context block that grounds a direct @orchestrator question. */
+export async function orchestratorAskContext(cwd: string, question: string): Promise<string> {
+  const b = loadBoard(cwd);
+  const open = b.tasks.filter((t) => t.status !== 'done');
+  const boardSummary = b.tasks.length
+    ? `Kanban board — ${b.tasks.length} cards (${b.tasks.length - open.length} done, ${open.length} open):\n` +
+      b.tasks.slice(0, 60).map((t) => `- [${t.status}] ${t.title}${t.source ? ` (from ${t.source})` : ''}`).join('\n') +
+      (b.tasks.length > 60 ? `\n…and ${b.tasks.length - 60} more` : '')
+    : 'The Kanban board is empty.';
+  const notes = await retrieveBrain(cwd, question).catch(() => []);
+  const brain = notes.length ? `${formatBrainContext(notes)}\n\n---\n\n` : '';
+  return `${brain}${boardSummary}\n\n---\n\nThe user asks the orchestrator: ${question}`;
+}
+
 const PLAN_INSTRUCTIONS = [
   'You are an ORCHESTRATOR. Break the user\'s coding task into a short, ordered checklist of',
   'concrete steps that a coder agent will execute one at a time.',

@@ -3,7 +3,7 @@ import { watch, readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
 import { loadConfig, readAgents, updateConfigFile, providerOf, demoteModelInChain, CONFIG_PATH, type AgentConfig } from './config.js';
 import { runAgentChain, runResilientChain, isAbortError, needsUserAction, type ChatMessage, type AgentEvent } from './agent.js';
-import { runOrchestrated } from './orchestrator.js';
+import { runOrchestrated, ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from './orchestrator.js';
 import { retrieveBrain, formatBrainContext } from './brain.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
@@ -59,17 +59,6 @@ const INIT_PROMPT = [
   `Keep it concise (under ~150 lines) and accurate to what you actually found. If ${CONTEXT_FILE}`,
   'already exists, update it. When done, briefly confirm what you wrote.',
 ].join('\n');
-
-// System prompt for a direct "@orchestrator" conversation — the user talking to the
-// scrum master, not kicking off a plan/execute run.
-const ORCHESTRATOR_CHAT_SYSTEM = [
-  'You are the ORCHESTRATOR (scrum master) for this project. The user is addressing you directly.',
-  'Answer their question conversationally and concisely, grounded in the Kanban board state and',
-  'project brain provided to you. You may assess progress, flag problems (e.g. junk, duplicate, or',
-  'stale cards), recommend what to do next, and suggest reprioritizing. Do NOT write code or call',
-  'tools — respond as the planner/manager. If the board looks corrupted or bloated, say so and',
-  'suggest running "/board clean" or "/board clear".',
-].join(' ');
 
 /** Read the project context file from the current working directory, if present. */
 function readProjectContext(): string {
@@ -827,16 +816,7 @@ async function main() {
         continue;
       }
       // Give it the board + relevant brain so it can actually reason about the kanban.
-      const b = loadBoard(workDir);
-      const openCards = b.tasks.filter((t) => t.status !== 'done');
-      const boardSummary = b.tasks.length
-        ? `Kanban board — ${b.tasks.length} cards (${b.tasks.length - openCards.length} done, ${openCards.length} open):\n` +
-          b.tasks.slice(0, 60).map((t) => `- [${t.status}] ${t.title}${t.source ? ` (from ${t.source})` : ''}`).join('\n') +
-          (b.tasks.length > 60 ? `\n…and ${b.tasks.length - 60} more` : '')
-        : 'The Kanban board is empty.';
-      const notes = await retrieveBrain(workDir, question).catch(() => []);
-      const brain = notes.length ? `${formatBrainContext(notes)}\n\n---\n\n` : '';
-      const context = `${brain}${boardSummary}\n\n---\n\nThe user asks the orchestrator: ${question}`;
+      const context = await orchestratorAskContext(workDir, question);
       console.log(`\n  ${C.magenta}▣ orchestrator${C.reset} ${C.dim}(${shortName(orchestratorChain[0])})${C.reset}`);
       console.log(`  ${C.dim}(Esc to stop)${C.reset}\n`);
       renderer.reset();

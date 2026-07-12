@@ -4,7 +4,8 @@ import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { CONFIG_PATH, readApiKey, readApiKeys, keyCooldownUntil, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
-import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
+import { runResilientChain, runAgentChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
+import { ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from '../src/orchestrator.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
 import { loadBrain, saveBrainNote, safeNotePath, BRAIN_DIR, ATTACH_DIR } from '../src/brain.js';
 import { extractText } from '../src/extract.js';
@@ -683,6 +684,51 @@ const server = createServer(async (req, res) => {
         json(res, 400, { error: 'empty message' });
         return;
       }
+
+      // @orchestrator <msg>: talk to the orchestrator/scrum master directly about a project's
+      // board (no plan/execute). Needs the SELECTED project's cwd (body.cwd) for the board.
+      const orchAsk = message.match(/^@orchestrator\b\s*([\s\S]*)$/i);
+      if (orchAsk) {
+        const orchChain = readAgents().orchestrator;
+        if (!orchChain.length) {
+          json(res, 400, { error: 'No orchestrator configured. Add one on the Code tab (Orchestrator agent).' });
+          return;
+        }
+        const projCwd = typeof body.cwd === 'string' && body.cwd && existsSync(body.cwd) ? body.cwd : null;
+        if (!projCwd) {
+          json(res, 400, { error: 'Select a project first — @orchestrator reasons about that project’s Kanban board.' });
+          return;
+        }
+        const question = orchAsk[1].trim() || 'What is the current status of the board and what should we do next?';
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        const sendO = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+        const acO = new AbortController();
+        req.on('close', () => acO.abort());
+        try {
+          const needsKey = orchChain.some((m) => providerOf(m) === 'openrouter');
+          const cfg = loadConfig({}, { skipApiKey: !needsKey });
+          const context = await orchestratorAskContext(projCwd, question);
+          const result = await runAgentChain(cfg, orchChain, context, {
+            noTools: true,
+            instructions: ORCHESTRATOR_CHAT_SYSTEM,
+            signal: acO.signal,
+            onEvent: (e: any) => sendO(e),
+          });
+          sendO({ type: 'done', text: result.text, usage: result.usage ?? null, model: result.model, failedOver: result.failedOver, sessionId });
+        } catch (err: any) {
+          if (isAbortError(err, acO.signal)) sendO({ type: 'stopped' });
+          else { const m = err?.message ?? String(err); sendO({ type: 'error', message: m, action: needsUserAction(m) }); }
+        } finally {
+          res.end();
+        }
+        return;
+      }
+
       const chain = readAgents().coder;
       if (!chain.length) {
         json(res, 400, { error: 'No coder model configured. Add one on the Code tab.' });
