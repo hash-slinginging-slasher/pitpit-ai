@@ -540,12 +540,35 @@
       let brainNotesData = [], brainOpen = null;   // brain vault state
       const expanded = new Set();
 
-      // Picking a project: browse its files (Files mode) or open its terminal (Terminal mode).
+      // Clear the brain editor when switching away from a note/project (avoid stale content).
+      function resetBrainEditor() {
+        brainOpen = null;
+        $("brainContent").value = "";
+        $("brainOpenName").textContent = "no note open";
+        $("brainSave").disabled = true; $("brainDelete").disabled = true;
+        $("brainLinks").innerHTML = "";
+      }
+      // Show the ACTIVE project's terminal (toggle which instance is visible), or the empty state.
+      function showActiveTerminal() {
+        const has = activeCwd && terminals.has(activeCwd);
+        terminals.forEach((t, k) => { t.el.style.display = k === activeCwd ? "block" : "none"; });
+        $("termStack").style.display = has ? "block" : "none";
+        $("termEmpty").style.display = has ? "none" : "flex";
+        $("termCwd").textContent = activeCwd || "—";
+        $("termRestart").style.display = has ? "" : "none";
+        $("termClose").style.display = has ? "" : "none";
+        if (has) setTimeout(() => fitTerm(terminals.get(activeCwd)), 40);
+      }
+
+      // Picking a project: reflect it in whatever sub-tab is active.
       function selectProject(cwd) {
         if (!cwd) return;
         activeCwd = cwd; highlightActive();
-        if (mainMode === "files") { filesCwd = cwd; loadTree(); connectFilesWs(); }
-        else if (mainMode === "brain") { brainOpen = null; loadBrainNotes(); }
+        if (mainMode === "files") {
+          filesCwd = cwd; openFilePath = null; loadTree(); connectFilesWs();
+          $("fileContent").value = ""; $("editPath").textContent = "no file open";
+          $("fileSave").disabled = $("fileDelete").disabled = $("fileHist").disabled = true; $("histPanel").style.display = "none";
+        } else if (mainMode === "brain") { resetBrainEditor(); loadBrainNotes(); }
         else openTerminal(cwd);
       }
 
@@ -557,12 +580,10 @@
         $("filesView").style.display = m === "files" ? "flex" : "none";
         $("brainView").style.display = m === "brain" ? "flex" : "none";
         $("termCtrls").style.display = m === "terminal" ? "" : "none";
-        const hasTerm = activeCwd && terminals.has(activeCwd);
-        $("termStack").style.display = m === "terminal" && hasTerm ? "block" : "none";
-        $("termEmpty").style.display = m === "terminal" && !hasTerm ? "flex" : "none";
+        if (m === "terminal") { showActiveTerminal(); }
+        else { $("termStack").style.display = "none"; $("termEmpty").style.display = "none"; }
         if (m === "files") { if (!filesCwd) filesCwd = activeCwd; loadTree(); connectFilesWs(); }
         else if (m === "brain") loadBrainNotes();
-        else if (hasTerm) setTimeout(() => fitTerm(terminals.get(activeCwd)), 50);
       }
       $("subTerm").onclick = () => { mainMode = "terminal"; applyMainMode(); };
       $("subFiles").onclick = () => { mainMode = "files"; applyMainMode(); };
