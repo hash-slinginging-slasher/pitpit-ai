@@ -142,7 +142,11 @@
       .gear.warn { border-color: var(--warn); color: var(--warn); }
       .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: flex-start; justify-content: center; z-index: 20; }
       .overlay.open { display: flex; }
-      .modal { margin-top: 90px; width: min(460px, 92vw); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; }
+      .modal { margin-top: 48px; width: min(860px, 94vw); max-height: calc(100vh - 96px); overflow-y: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; }
+      .keys-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 22px; }
+      @media (max-width: 620px) { .keys-grid { grid-template-columns: 1fr; } }
+      .keys-grid .field { min-width: 0; }
+      .keys-grid .field label { margin-top: 0; }
       .modal h2 { margin: 0 0 4px; font-size: 16px; }
       .modal p { color: var(--dim); font-size: 13px; margin: 0 0 14px; }
       .modal label { display: block; font-size: 13px; margin-bottom: 6px; }
@@ -198,33 +202,38 @@
       <div class="modal">
         <h2>Settings</h2>
         <p>Your OpenRouter API key is stored locally in <code>secrets.json</code> and used by both the model list and the CLI. It never leaves your machine.</p>
-        <label for="keyInput">OpenRouter API key</label>
-        <input id="keyInput" type="password" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false" />
-        <div class="show-key">
-          <label><input type="checkbox" id="showKey" /> show key</label>
-          <button id="copyKey" class="btn-ghost" style="margin: 0; padding: 3px 9px;">Copy key</button>
-          <span id="copyKeyStatus"></span>
+        <div class="keys-grid">
+          <div class="field">
+            <label for="keyInput">OpenRouter API key</label>
+            <input id="keyInput" type="password" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false" />
+            <div class="show-key"><label><input type="checkbox" id="showKey" /> show</label><button id="copyKey" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="copyKeyStatus"></span></div>
+          </div>
+          <div class="field">
+            <label for="nvidiaInput">NVIDIA build API key <span style="color:var(--dim)">(<code>nvidia-build/…</code>)</span></label>
+            <input id="nvidiaInput" type="password" placeholder="nvapi-…" autocomplete="off" spellcheck="false" />
+            <div class="show-key"><label><input type="checkbox" id="nvidiaShow" /> show</label><button id="nvidiaCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="nvidiaCopyStatus"></span><span id="nvidiaStatus"></span></div>
+          </div>
+          <div class="field">
+            <label for="groqInput">Groq API key <span style="color:var(--dim)">(<code>groq/…</code>)</span></label>
+            <input id="groqInput" type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" />
+            <div class="show-key"><label><input type="checkbox" id="groqShow" /> show</label><button id="groqCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="groqCopyStatus"></span><span id="groqStatus"></span></div>
+          </div>
+          <div class="field">
+            <label for="githubInput">GitHub Models token <span style="color:var(--dim)">(<code>github-models/…</code>)</span></label>
+            <input id="githubInput" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" />
+            <div class="show-key"><label><input type="checkbox" id="githubShow" /> show</label><button id="githubCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="githubCopyStatus"></span><span id="githubStatus"></span></div>
+          </div>
+          <div class="field">
+            <label for="geminiInput">Gemini API key <span style="color:var(--dim)">(optional, for <code>cli/gemini</code>)</span></label>
+            <input id="geminiInput" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+            <div class="show-key"><label><input type="checkbox" id="geminiShow" /> show</label><button id="geminiCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="geminiCopyStatus"></span><span id="geminiStatus"></span></div>
+          </div>
+          <div class="field">
+            <label for="julesInput">Jules API key <span style="color:var(--dim)">(<code>cli/jules</code> — PR agent)</span></label>
+            <input id="julesInput" type="password" placeholder="from jules.google → Settings" autocomplete="off" spellcheck="false" />
+            <div class="show-key"><label><input type="checkbox" id="julesShow" /> show</label><button id="julesCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="julesCopyStatus"></span><span id="julesStatus"></span></div>
+          </div>
         </div>
-
-        <label for="nvidiaInput" style="margin-top: 16px;">NVIDIA build API key <span style="color:var(--dim)">(build.nvidia.com — <code>nvidia-build/…</code> models)</span></label>
-        <input id="nvidiaInput" type="password" placeholder="nvapi-…" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><label><input type="checkbox" id="nvidiaShow" /> show</label><button id="nvidiaCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="nvidiaCopyStatus"></span><span id="nvidiaStatus"></span></div>
-
-        <label for="groqInput" style="margin-top: 16px;">Groq API key <span style="color:var(--dim)">(console.groq.com — <code>groq/…</code> models)</span></label>
-        <input id="groqInput" type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><label><input type="checkbox" id="groqShow" /> show</label><button id="groqCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="groqCopyStatus"></span><span id="groqStatus"></span></div>
-
-        <label for="githubInput" style="margin-top: 16px;">GitHub Models token <span style="color:var(--dim)">(github.com/marketplace/models — <code>github-models/…</code> models)</span></label>
-        <input id="githubInput" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><label><input type="checkbox" id="githubShow" /> show</label><button id="githubCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="githubCopyStatus"></span><span id="githubStatus"></span></div>
-
-        <label for="geminiInput" style="margin-top: 16px;">Gemini API key <span style="color:var(--dim)">(optional — lets <code>cli/gemini</code> use the API instead of the CLI login)</span></label>
-        <input id="geminiInput" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><label><input type="checkbox" id="geminiShow" /> show</label><button id="geminiCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="geminiCopyStatus"></span><span id="geminiStatus"></span></div>
-
-        <label for="julesInput" style="margin-top: 16px;">Jules API key <span style="color:var(--dim)">(<code>cli/jules</code> — async agent that opens a PR on a connected GitHub repo)</span></label>
-        <input id="julesInput" type="password" placeholder="from jules.google → Settings" autocomplete="off" spellcheck="false" />
-        <div class="show-key"><label><input type="checkbox" id="julesShow" /> show</label><button id="julesCopy" class="btn-ghost" style="margin:0;padding:3px 9px;">Copy</button><span id="julesCopyStatus"></span><span id="julesStatus"></span></div>
 
         <label for="dbInput" style="margin-top: 16px;">Postgres connection URL (for projects &amp; history)</label>
         <input id="dbInput" type="text" placeholder="postgres://user:pass@localhost:5432/dbname" autocomplete="off" spellcheck="false" />
