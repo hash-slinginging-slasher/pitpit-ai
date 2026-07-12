@@ -218,7 +218,8 @@ export async function runOrchestrated(
         `CODER RESULT:\n${(lastText || '(no output)').slice(0, 2000)}`;
       const reviewText = await orchestratorSay(config, orchestratorChain, reviewInput, REVIEW_INSTRUCTIONS, options?.signal);
       const review = parseReview(reviewText);
-      if (step.status !== 'failed') step.status = review.status === 'failed' ? 'failed' : 'done';
+      // The coder returned (didn't throw), so the step ran; the review decides done vs failed.
+      step.status = review.status === 'failed' ? 'failed' : 'done';
       if (review.note) step.note = review.note;
       if (review.next && ledger.length < maxSteps) {
         const added: LedgerStep = { title: review.next, status: 'pending' };
