@@ -452,7 +452,10 @@
           case "continue": if (e.reason === "step-cap") events.innerHTML += `<div class="evt">… ${esc(short(e.model))} hit the step cap — continuing (task not done yet)</div>`; scrollDown(); break;
           case "plan": {
             const items = e.steps.map((s, i) => `<div class="evt">${i + 1}. ${esc(s)}</div>`).join("");
-            bubble.insertAdjacentHTML("beforebegin", `<div class="chip">▣ plan · orchestrator: ${esc(e.orchestrator)}</div><div class="events">${items}</div>`);
+            const verb = e.resumed ? "resuming plan" : "plan";
+            const prov = e.source ? ` · from ${esc(e.source)}` : "";
+            const rez = e.resumed ? ` · continuing ${e.steps.length} open card(s)` : "";
+            bubble.insertAdjacentHTML("beforebegin", `<div class="chip">▣ ${verb} · orchestrator: ${esc(e.orchestrator)}${prov}${rez}</div><div class="events">${items}</div>`);
             scrollDown(); break;
           }
           case "step":
@@ -950,7 +953,8 @@
           counts[st]++;
           const card = document.createElement("div");
           card.className = "kcard"; card.dataset.status = st; card.dataset.id = t.id; card.draggable = true;
-          card.innerHTML = `<div class="ktitle">${esc(t.title)}</div>${t.detail ? `<div class="kdetail">${esc(t.detail)}</div>` : ""}<div class="kmeta"><span class="kby">${esc(t.by || "you")}</span><span class="kdel" title="delete">✕</span></div>`;
+          const srcChip = t.source ? `<span class="ksrc" title="derived from the plan for ${esc(t.source)}" style="font-size:10px; opacity:.75; margin-right:6px;">↳ ${esc(t.source)}</span>` : "";
+          card.innerHTML = `<div class="ktitle">${esc(t.title)}</div>${t.detail ? `<div class="kdetail">${esc(t.detail)}</div>` : ""}<div class="kmeta">${srcChip}<span class="kby">${esc(t.by || "you")}</span><span class="kdel" title="delete">✕</span></div>`;
           card.querySelector(".kdel").onclick = (e) => { e.stopPropagation(); boardTasks = boardTasks.filter((x) => x.id !== t.id); renderBoard(); saveBoardTasks(); };
           card.querySelector(".ktitle").onclick = async () => { const nv = await askText("Edit task:", t.title); if (nv != null && nv.trim()) { t.title = nv.trim(); renderBoard(); saveBoardTasks(); } };
           card.addEventListener("dragstart", (e) => { e.dataTransfer.setData("text/plain", t.id); card.classList.add("dragging"); });

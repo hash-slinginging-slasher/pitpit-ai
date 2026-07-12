@@ -846,7 +846,10 @@ async function main() {
         signal: activeAbort.signal,
         onEvent: (e: AgentEvent) => {
           if (e.type === 'plan') {
-            console.log(`\n  ${C.magenta}▣ plan${C.reset} ${C.dim}(orchestrator: ${shortName(e.orchestrator)})${C.reset}`);
+            const prov = e.source ? `${C.dim} · from ${e.source}${C.reset}` : '';
+            const verb = e.resumed ? 'resuming plan' : 'plan';
+            console.log(`\n  ${C.magenta}▣ ${verb}${C.reset} ${C.dim}(orchestrator: ${shortName(e.orchestrator)})${C.reset}${prov}`);
+            if (e.resumed) console.log(`  ${C.dim}continuing ${e.steps.length} open board card(s)${C.reset}`);
             e.steps.forEach((s, i) => console.log(`  ${C.dim}${i + 1}.${C.reset} ${s}`));
             return;
           }

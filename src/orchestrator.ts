@@ -7,8 +7,8 @@ import {
   type AgentEvent,
   type RunOptions,
 } from './agent.js';
-import { brainContext } from './brain.js';
-import { addTask, updateTask } from './board.js';
+import { brainContext, retrieveBrain, formatBrainContext } from './brain.js';
+import { addTask, updateTask, loadBoard } from './board.js';
 import { readAgents } from './config.js';
 
 /**
@@ -129,28 +129,60 @@ export async function runOrchestrated(
     }
   };
 
-  // 1) PLAN — informed by the project brain (durable notes about this project).
-  abortCheck();
-  const planBrain = await brainContext(process.cwd(), task);
-  let plan: string[] | null = null;
-  try {
-    const planInput = (planBrain ? `${planBrain}\n\n---\n\n` : '') + task;
-    const planText = await orchestratorSay(config, orchestratorChain, planInput, PLAN_INSTRUCTIONS, options?.signal);
-    plan = parsePlan(planText);
-  } catch (err) {
-    if (isAbortError(err, options?.signal)) throw err;
-    // planning failed → fall through to a single-step plan (still resilient on coders)
-  }
-  const ledger: LedgerStep[] = (plan ?? [task]).map((title) => ({ title, status: 'pending' }));
-  emit({ type: 'plan', steps: ledger.map((s) => s.title), orchestrator: orchestratorChain[0] ?? '' });
-
-  // Scrum master: put each planned step on the Kanban board as a To Do card.
   const boardCwd = process.cwd();
+
+  // 0) RESUME? If the board already holds open orchestrator cards (a plan derived earlier from
+  // the PRD/brain), work down THOSE instead of re-planning — the board is the source of truth,
+  // and the cards carry their provenance (source PRD + planId). Only fall back to fresh planning
+  // when there's nothing open to continue.
+  let ledger: LedgerStep[] = [];
+  let planId = '';
+  let source: string | undefined;
+  let resumed = false;
   try {
-    for (const s of ledger) s.cardId = addTask(boardCwd, s.title, { status: 'todo', by: 'orchestrator' }).id;
+    const open = loadBoard(boardCwd).tasks.filter(
+      (t) => t.status !== 'done' && (t.by === 'orchestrator' || !!t.planId),
+    );
+    if (open.length) {
+      ledger = open.map((t) => ({ title: t.title, status: 'pending' as const, cardId: t.id }));
+      planId = open.find((t) => t.planId)?.planId ?? '';
+      source = open.find((t) => t.source)?.source;
+      resumed = true;
+    }
   } catch {
     /* board is best-effort */
   }
+
+  // 1) PLAN (only when not resuming) — informed by the project brain, where the PRD lives.
+  // The top retrieved note becomes the plan's `source`, and every card is stamped with the
+  // shared planId so the whole chain (PRD → plan → card) is traceable and resumable.
+  if (!resumed) {
+    abortCheck();
+    const notes = await retrieveBrain(boardCwd, task).catch(() => []);
+    source = notes[0]?.name; // e.g. the PRD note this plan is derived from
+    const planBrain = formatBrainContext(notes);
+    let plan: string[] | null = null;
+    try {
+      const planInput = (planBrain ? `${planBrain}\n\n---\n\n` : '') + task;
+      const planText = await orchestratorSay(config, orchestratorChain, planInput, PLAN_INSTRUCTIONS, options?.signal);
+      plan = parsePlan(planText);
+    } catch (err) {
+      if (isAbortError(err, options?.signal)) throw err;
+      // planning failed → fall through to a single-step plan (still resilient on coders)
+    }
+    planId = 'plan_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    ledger = (plan ?? [task]).map((title) => ({ title, status: 'pending' }));
+    // Scrum master: put each planned step on the Kanban board as a To Do card, stamped with
+    // its provenance (source PRD + planId).
+    try {
+      for (const s of ledger) s.cardId = addTask(boardCwd, s.title, { status: 'todo', by: 'orchestrator', planId, source }).id;
+    } catch {
+      /* board is best-effort */
+    }
+  }
+
+  emit({ type: 'plan', steps: ledger.map((s) => s.title), orchestrator: orchestratorChain[0] ?? '', resumed, source });
+
   const setCard = (step: LedgerStep, status: 'todo' | 'pending' | 'done', detail?: string) => {
     if (step.cardId) { try { updateTask(boardCwd, step.cardId, { status, ...(detail ? { detail } : {}) }); } catch { /* ignore */ } }
   };
@@ -231,7 +263,7 @@ export async function runOrchestrated(
       if (review.note) step.note = review.note;
       if (review.next && ledger.length < maxSteps) {
         const added: LedgerStep = { title: review.next, status: 'pending' };
-        try { added.cardId = addTask(boardCwd, added.title, { status: 'todo', by: 'orchestrator' }).id; } catch { /* ignore */ }
+        try { added.cardId = addTask(boardCwd, added.title, { status: 'todo', by: 'orchestrator', planId, source }).id; } catch { /* ignore */ }
         ledger.push(added);
       }
       // Honor an early "task-complete" only after real progress. A weak local reviewer will

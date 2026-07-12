@@ -26,7 +26,7 @@ export type AgentEvent =
   | { type: 'tool_result'; name: string; callId: string; output: string }
   | { type: 'reasoning'; delta: string }
   // Orchestrator events (only emitted when an orchestrator model is configured):
-  | { type: 'plan'; steps: string[]; orchestrator: string }
+  | { type: 'plan'; steps: string[]; orchestrator: string; resumed?: boolean; source?: string }
   | { type: 'step'; phase: 'start' | 'done' | 'failed'; index: number; total: number; title: string; note?: string };
 
 /** Shared run options. `noTools`/`instructions` support one-off calls like summarization. */

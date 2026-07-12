@@ -15,6 +15,8 @@ export interface Task {
   detail?: string;
   status: TaskStatus;
   by?: string; // 'orchestrator' | 'you' | 'agent'
+  source?: string; // provenance: brain note / PRD the plan was derived from (e.g. "prd/agent-debug")
+  planId?: string; // groups all cards created from one orchestrator plan
   created: number;
   updated: number;
 }
@@ -49,7 +51,11 @@ function genId(): string {
 }
 
 /** Add a task; returns it. */
-export function addTask(cwd: string, title: string, opts?: { detail?: string; status?: TaskStatus; by?: string }): Task {
+export function addTask(
+  cwd: string,
+  title: string,
+  opts?: { detail?: string; status?: TaskStatus; by?: string; source?: string; planId?: string },
+): Task {
   const board = loadBoard(cwd);
   const now = Date.now();
   const task: Task = {
@@ -58,6 +64,8 @@ export function addTask(cwd: string, title: string, opts?: { detail?: string; st
     detail: opts?.detail,
     status: opts?.status ?? 'todo',
     by: opts?.by ?? 'you',
+    source: opts?.source,
+    planId: opts?.planId,
     created: now,
     updated: now,
   };
