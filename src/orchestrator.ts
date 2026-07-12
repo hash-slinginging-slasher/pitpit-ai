@@ -190,6 +190,17 @@ export async function runOrchestrated(
       planId = open.find((t) => t.planId)?.planId ?? '';
       source = open.find((t) => t.source)?.source;
       resumed = true;
+      // Don't tunnel on old cards: if the user gave a REAL instruction this turn (not just
+      // "proceed"/"continue"), handle it FIRST as a new top-priority step, then continue the
+      // board. Otherwise a fresh request (e.g. "snake.py fails: No module named pygame") would
+      // be ignored while the orchestrator replays stale cards.
+      const trivial = /^(proceed|continue|next|go( on)?|keep going|resume|carry on|ok(ay)?|yes|y|do it|please continue|continue\.?)\s*$/i;
+      const t = (task || '').trim();
+      if (t && !trivial.test(t)) {
+        const first: LedgerStep = { title: t.slice(0, 200), status: 'pending' };
+        try { first.cardId = addTask(boardCwd, first.title, { status: 'todo', by: 'orchestrator', planId, source }).id; } catch { /* ignore */ }
+        ledger.unshift(first);
+      }
     }
   } catch {
     /* board is best-effort */
