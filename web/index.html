@@ -161,6 +161,8 @@
         width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
         background: var(--bg); color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
       }
+      /* Configured key: green-tinted border so a set key reads at a glance. */
+      .modal input.configured { border-color: var(--good); }
       .modal .row { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
       .modal .status { font-size: 12px; color: var(--dim); margin-top: 8px; min-height: 16px; }
       .modal .status.ok { color: var(--good); }
@@ -683,40 +685,55 @@
         gear.classList.toggle("warn", !keyIsSet);
         gear.textContent = keyIsSet ? "⚙ Settings" : "⚙ Add API key";
       }
+      // Provider key fields — unified metadata for load / save / show / copy / validate.
+      const KEY_FIELDS = [
+        { input:"keyInput",    show:"showKey",    copy:"copyKey",    warn:"copyKeyStatus",   status:null,           has:"hasKey",    mask:"keyMasked",    env:"fromEnv",       secret:"openrouterApiKey", payload:"openrouterApiKey", ph:"sk-or-v1-…",  prefixes:["sk-or-"] },
+        { input:"nvidiaInput", show:"nvidiaShow", copy:"nvidiaCopy", warn:"nvidiaCopyStatus",status:"nvidiaStatus", has:"hasNvidia", mask:"nvidiaMasked", env:"nvidiaFromEnv", secret:"nvidiaApiKey",     payload:"nvidiaApiKey",    ph:"nvapi-…",     prefixes:["nvapi-"] },
+        { input:"groqInput",   show:"groqShow",   copy:"groqCopy",   warn:"groqCopyStatus",  status:"groqStatus",   has:"hasGroq",   mask:"groqMasked",   env:"groqFromEnv",   secret:"groqApiKey",       payload:"groqApiKey",      ph:"gsk_…",       prefixes:["gsk_"] },
+        { input:"githubInput", show:"githubShow", copy:"githubCopy", warn:"githubCopyStatus",status:"githubStatus", has:"hasGithub", mask:"githubMasked", env:"githubFromEnv", secret:"githubToken",      payload:"githubToken",     ph:"ghp_… or github_pat_…", prefixes:["ghp_","github_pat_","gho_"] },
+        { input:"geminiInput", show:"geminiShow", copy:"geminiCopy", warn:"geminiCopyStatus",status:"geminiStatus", has:"hasGemini", mask:"geminiMasked", env:"geminiFromEnv", secret:"geminiApiKey",     payload:"geminiApiKey",    ph:"AIza…",       prefixes:["AIza"], statusNo:"not set (cli/gemini will use the CLI login)" },
+        { input:"julesInput",  show:"julesShow",  copy:"julesCopy",  warn:"julesCopyStatus", status:"julesStatus",  has:"hasJules",  mask:"julesMasked",  env:"julesFromEnv",  secret:"julesApiKey",      payload:"julesApiKey",     ph:"from jules.google → Settings", prefixes:null },
+      ];
+      // Show the masked key as VISIBLE text (so a set key is obvious at a glance), flagged
+      // so it's never saved back verbatim. Typing clears the mask and marks the field edited.
+      function fillKeyField(f, s) {
+        const inp = $(f.input);
+        inp.dataset.edited = "";
+        if (s[f.has]) {
+          const m = s[f.mask] + (s[f.env] ? " (from env)" : "");
+          inp.value = m; inp.dataset.mask = m; inp.dataset.masked = "1"; inp.type = "text";
+          inp.classList.add("configured");
+        } else {
+          inp.value = ""; inp.dataset.mask = ""; inp.dataset.masked = ""; inp.type = "password";
+          inp.classList.remove("configured");
+        }
+        inp.placeholder = f.ph;
+        if (f.warn) $(f.warn).textContent = "";
+        if (f.status) { const el = $(f.status); el.textContent = s[f.has] ? "configured ✓" : (f.statusNo || "not set"); el.style.color = s[f.has] ? "var(--good)" : "var(--dim)"; }
+      }
+      function validatePrefix(f) {
+        const el = $(f.warn); if (!el) return;
+        const inp = $(f.input);
+        if (!f.prefixes || inp.dataset.masked === "1") { el.textContent = ""; return; }
+        const v = (inp.value || "").trim();
+        if (!v) { el.textContent = ""; return; }
+        if (f.prefixes.some((p) => v.startsWith(p))) el.textContent = "";
+        else { el.textContent = "⚠ expected " + f.prefixes.join(" or ") + "…"; el.style.color = "var(--warn)"; }
+      }
+
       async function loadSettings() {
         try {
           const s = await (await fetch("/api/settings")).json();
           keyIsSet = s.hasKey;
           reflectKeyState();
-          $("settingsStatus").textContent = s.hasKey
-            ? s.fromEnv ? "Key set via environment variable." : "Key set: " + s.keyMasked
-            : "No key set yet.";
-          $("settingsStatus").className = "status" + (s.hasKey ? " ok" : "");
+          $("settingsStatus").textContent = "";
+          $("settingsStatus").className = "status";
           $("dbInput").value = "";
           $("dbInput").placeholder = s.hasDb ? s.dbMasked + (s.dbFromEnv ? " (from env)" : "") : "postgres://user:pass@localhost:5432/dbname";
           $("dbStatus").textContent = s.hasDb ? "configured" : "not set";
           $("dbStatus").style.color = s.hasDb ? "var(--good)" : "var(--dim)";
           if (s.localBaseUrl) { localBaseUrlHint = s.localBaseUrl; const el = document.getElementById("localUrlHint2"); if (el) el.textContent = s.localBaseUrl; }
-          $("nvidiaInput").value = "";
-          $("nvidiaInput").placeholder = s.hasNvidia ? s.nvidiaMasked + (s.nvidiaFromEnv ? " (from env)" : "") : "nvapi-…";
-          $("nvidiaStatus").textContent = s.hasNvidia ? "configured ✓" : "not set";
-          $("nvidiaStatus").style.color = s.hasNvidia ? "var(--good)" : "var(--dim)";
-          $("groqInput").value = "";
-          $("groqInput").placeholder = s.hasGroq ? s.groqMasked + (s.groqFromEnv ? " (from env)" : "") : "gsk_…";
-          $("groqStatus").textContent = s.hasGroq ? "configured ✓" : "not set";
-          $("groqStatus").style.color = s.hasGroq ? "var(--good)" : "var(--dim)";
-          $("githubInput").value = "";
-          $("githubInput").placeholder = s.hasGithub ? s.githubMasked + (s.githubFromEnv ? " (from env)" : "") : "ghp_… or github_pat_…";
-          $("githubStatus").textContent = s.hasGithub ? "configured ✓" : "not set";
-          $("githubStatus").style.color = s.hasGithub ? "var(--good)" : "var(--dim)";
-          $("geminiInput").value = "";
-          $("geminiInput").placeholder = s.hasGemini ? s.geminiMasked + (s.geminiFromEnv ? " (from env)" : "") : "AIza…";
-          $("geminiStatus").textContent = s.hasGemini ? "configured ✓" : "not set (cli/gemini will use the CLI login)";
-          $("geminiStatus").style.color = s.hasGemini ? "var(--good)" : "var(--dim)";
-          $("julesInput").value = "";
-          $("julesInput").placeholder = s.hasJules ? s.julesMasked + (s.julesFromEnv ? " (from env)" : "") : "from jules.google → Settings";
-          $("julesStatus").textContent = s.hasJules ? "configured ✓" : "not set";
-          $("julesStatus").style.color = s.hasJules ? "var(--good)" : "var(--dim)";
+          KEY_FIELDS.forEach((f) => fillKeyField(f, s));
         } catch (e) {}
       }
 
@@ -735,27 +752,20 @@
           $("dbStatus").style.color = "var(--warn)";
         }
       }
-      function openSettings() { $("overlay").classList.add("open"); $("keyInput").value = ""; $("keyInput").focus(); }
+      function openSettings() { $("overlay").classList.add("open"); loadSettings(); }
       function closeSettings() { $("overlay").classList.remove("open"); }
       async function saveSettings() {
-        const key = $("keyInput").value.trim();
+        // Only send fields the user actually edited — an untouched field still shows the
+        // masked display value, which must NEVER be saved back as the real key.
+        const payload = {};
+        KEY_FIELDS.forEach((f) => {
+          if ($(f.input).dataset.edited === "1") payload[f.payload] = $(f.input).value.trim();
+        });
         const dbUrl = $("dbInput").value.trim();
-        const nvidia = $("nvidiaInput").value.trim();
-        const github = $("githubInput").value.trim();
-        const groq = $("groqInput").value.trim();
-        const gemini = $("geminiInput").value.trim();
-        const jules = $("julesInput").value.trim();
-        if (!key && !dbUrl && !nvidia && !github && !groq && !gemini && !jules) { $("settingsStatus").textContent = "Enter a key or a Postgres URL."; $("settingsStatus").className = "status"; return; }
+        if (dbUrl) payload.databaseUrl = dbUrl;
+        if (!Object.keys(payload).length) { $("settingsStatus").textContent = "No changes to save."; $("settingsStatus").className = "status"; return; }
         $("settingsStatus").textContent = "Saving…"; $("settingsStatus").className = "status";
         try {
-          const payload = {};
-          if (key) payload.openrouterApiKey = key;
-          if (dbUrl) payload.databaseUrl = dbUrl;
-          if (nvidia) payload.nvidiaApiKey = nvidia;
-          if (github) payload.githubToken = github;
-          if (groq) payload.groqApiKey = groq;
-          if (gemini) payload.geminiApiKey = gemini;
-          if (jules) payload.julesApiKey = jules;
           const s = await (await fetch("/api/settings", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
@@ -792,61 +802,27 @@
       $("closeSettings").addEventListener("click", closeSettings);
       $("saveSettings").addEventListener("click", saveSettings);
       $("testDb").addEventListener("click", testDb);
-      $("showKey").addEventListener("change", async (e) => {
-        if (e.target.checked) {
-          const s = await reveal();
-          if (s.openrouterApiKey) $("keyInput").value = s.openrouterApiKey;
-          $("keyInput").type = "text";
-        } else {
-          $("keyInput").type = "password";
-          if (!$("keyInput").dataset.edited) $("keyInput").value = "";
-        }
-      });
-      $("keyInput").addEventListener("input", () => ($("keyInput").dataset.edited = "1"));
-      $("copyKey").addEventListener("click", async () => {
-        const s = await reveal();
-        if (!s.openrouterApiKey) { $("copyKeyStatus").textContent = "no key set"; $("copyKeyStatus").style.color = "var(--warn)"; setTimeout(()=>$("copyKeyStatus").textContent="",1500); return; }
-        copyToClipboard(s.openrouterApiKey, $("copyKeyStatus"));
-      });
-      // Warn (as you type) if a key doesn't start with its provider's expected prefix —
-      // catches pasting a key into the wrong field before you Save.
-      const KEY_PREFIXES = {
-        keyInput: ["sk-or-"],
-        nvidiaInput: ["nvapi-"],
-        groqInput: ["gsk_"],
-        githubInput: ["ghp_", "github_pat_", "gho_"],
-        geminiInput: ["AIza"],
-        // julesInput: no fixed prefix — skip.
-      };
-      function validatePrefix(inputId, statusId) {
-        const el = $(statusId); if (!el) return;
-        const v = ($(inputId).value || "").trim();
-        const pre = KEY_PREFIXES[inputId];
-        if (!v || !pre) { el.textContent = ""; return; }
-        if (pre.some((p) => v.startsWith(p))) { el.textContent = ""; }
-        else { el.textContent = "⚠ expected " + pre.join(" or ") + "…"; el.style.color = "var(--warn)"; }
-      }
-      $("keyInput").addEventListener("input", () => validatePrefix("keyInput", "copyKeyStatus"));
-
-      // Generic show/copy for the other provider keys (same behavior as OpenRouter above).
-      [
-        ["nvidiaInput", "nvidiaShow", "nvidiaCopy", "nvidiaCopyStatus", "nvidiaApiKey"],
-        ["groqInput", "groqShow", "groqCopy", "groqCopyStatus", "groqApiKey"],
-        ["githubInput", "githubShow", "githubCopy", "githubCopyStatus", "githubToken"],
-        ["geminiInput", "geminiShow", "geminiCopy", "geminiCopyStatus", "geminiApiKey"],
-        ["julesInput", "julesShow", "julesCopy", "julesCopyStatus", "julesApiKey"],
-      ].forEach(([inputId, showId, copyId, copyStatusId, secretKey]) => {
-        const inp = $(inputId);
-        inp.addEventListener("input", () => { inp.dataset.edited = "1"; validatePrefix(inputId, copyStatusId); });
-        $(showId).addEventListener("change", async (e) => {
-          if (e.target.checked) { const s = await reveal(); if (s[secretKey]) inp.value = s[secretKey]; inp.type = "text"; }
-          else { inp.type = "password"; if (!inp.dataset.edited) inp.value = ""; }
+      // Wire all provider key fields uniformly: focus selects the mask, typing marks the
+      // field edited (and hides the real key unless "show" is on), show reveals/restores,
+      // copy copies the real key, and prefix mismatches warn.
+      KEY_FIELDS.forEach((f) => {
+        const inp = $(f.input);
+        inp.addEventListener("focus", () => { if (inp.dataset.masked === "1") inp.select(); });
+        inp.addEventListener("input", () => {
+          if (inp.dataset.masked === "1") inp.dataset.masked = "";
+          inp.dataset.edited = "1";
+          if (f.show && !$(f.show).checked) inp.type = "password";
+          validatePrefix(f);
         });
-        $(copyId).addEventListener("click", async () => {
-          const s = await reveal();
-          const st = $(copyStatusId);
-          if (!s[secretKey]) { st.textContent = "no key set"; st.style.color = "var(--warn)"; setTimeout(() => (st.textContent = ""), 1500); return; }
-          copyToClipboard(s[secretKey], st);
+        if (f.show) $(f.show).addEventListener("change", async (e) => {
+          if (e.target.checked) { const s = await reveal(); if (s[f.secret]) { inp.value = s[f.secret]; inp.dataset.masked = ""; } inp.type = "text"; }
+          else if (inp.dataset.edited === "1") { inp.type = "password"; }
+          else { inp.value = inp.dataset.mask || ""; inp.dataset.masked = inp.dataset.mask ? "1" : ""; inp.type = "text"; }
+        });
+        if (f.copy) $(f.copy).addEventListener("click", async () => {
+          const s = await reveal(); const st = $(f.warn);
+          if (!s[f.secret]) { st.textContent = "no key set"; st.style.color = "var(--warn)"; setTimeout(() => (st.textContent = ""), 1500); return; }
+          copyToClipboard(s[f.secret], st);
         });
       });
       $("copyDb").addEventListener("click", async () => {
