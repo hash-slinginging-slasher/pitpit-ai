@@ -9,6 +9,7 @@ import {
 } from './agent.js';
 import { brainContext } from './brain.js';
 import { addTask, updateTask } from './board.js';
+import { readAgents } from './config.js';
 
 /**
  * Orchestration: a reliable "orchestrator" model plans a task into a checklist and
@@ -171,8 +172,14 @@ export async function runOrchestrated(
       `The files on disk already reflect any earlier steps. Focus on THIS step; when done, ` +
       `briefly state what you changed. Do not restate the whole plan.`;
 
+    // Re-read the coder chain each step so coders demoted for rate-limits/failures earlier in
+    // THIS task drop to the bottom and aren't re-tried from the top every step (and so any
+    // chain edits you make mid-run are picked up).
+    const currentCoders = (() => {
+      try { const c = readAgents().coder; return c.length ? c : coderChain; } catch { return coderChain; }
+    })();
     try {
-      const res = await runResilientChain(config, coderChain, stepPrompt, {
+      const res = await runResilientChain(config, currentCoders, stepPrompt, {
         signal: options?.signal,
         onEvent: (e) => emit(e), // stream the coder's text/tool events through
         onFailover: options?.onFailover,
