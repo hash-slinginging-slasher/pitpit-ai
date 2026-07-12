@@ -103,6 +103,13 @@ export async function setSessionTitle(sessionId: number, title: string): Promise
   await getPool().query("UPDATE sessions SET title = $1 WHERE id = $2 AND (title IS NULL OR title = '')", [title, sessionId]);
 }
 
+/** Delete a project (and its sessions/messages/memory via ON DELETE CASCADE) by path. */
+export async function deleteProjectByPath(path: string): Promise<boolean> {
+  await ensureSchema();
+  const r = await getPool().query('DELETE FROM projects WHERE path = $1', [path]);
+  return (r.rowCount ?? 0) > 0;
+}
+
 export async function listProjects(): Promise<Project[]> {
   await ensureSchema();
   const r = await getPool().query(

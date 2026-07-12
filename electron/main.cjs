@@ -72,10 +72,51 @@ async function startServer() {
   await waitForPort(PORT);
 }
 
+// --- Window size/position persistence (remember bounds across close/relaunch) ---
+function winStateFile() {
+  return path.join(app.getPath('userData'), 'window-state.json');
+}
+function loadWindowState() {
+  try {
+    return JSON.parse(fs.readFileSync(winStateFile(), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+function saveWindowState(win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    // getNormalBounds = the un-maximized bounds, so restoring a maximized window still knows
+    // its "restore" size. Store the maximized flag separately.
+    const b = win.getNormalBounds ? win.getNormalBounds() : win.getBounds();
+    fs.writeFileSync(winStateFile(), JSON.stringify({ ...b, isMaximized: win.isMaximized() }));
+  } catch {
+    /* best-effort */
+  }
+}
+// True if the saved rectangle still overlaps a connected display (so we don't restore a window
+// off-screen after a monitor is unplugged).
+function boundsVisible(b) {
+  if (!b || typeof b.x !== 'number' || typeof b.y !== 'number') return false;
+  try {
+    const { screen } = require('electron');
+    return screen.getAllDisplays().some((d) => {
+      const a = d.workArea;
+      return b.x < a.x + a.width && b.x + (b.width || 0) > a.x && b.y < a.y + a.height && b.y + (b.height || 0) > a.y;
+    });
+  } catch {
+    return false;
+  }
+}
+
 async function createWindow() {
+  const saved = loadWindowState();
+  const useSaved = saved && boundsVisible(saved);
   const win = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    width: useSaved && saved.width ? saved.width : 1200,
+    height: useSaved && saved.height ? saved.height : 820,
+    x: useSaved ? saved.x : undefined,
+    y: useSaved ? saved.y : undefined,
     minWidth: 720,
     minHeight: 480,
     backgroundColor: '#1a1a1a',
@@ -102,6 +143,20 @@ async function createWindow() {
     }
     return { action: 'allow' };
   });
+
+  if (saved && saved.isMaximized) win.maximize();
+
+  // Persist size/position on change (debounced) and on close, so the next launch restores them.
+  let saveTimer = null;
+  const persist = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => saveWindowState(win), 400);
+  };
+  win.on('resize', persist);
+  win.on('move', persist);
+  win.on('maximize', persist);
+  win.on('unmaximize', persist);
+  win.on('close', () => saveWindowState(win));
 
   await win.loadURL(`http://localhost:${PORT}/chat`);
 }

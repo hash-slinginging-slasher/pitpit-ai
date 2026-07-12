@@ -41,6 +41,9 @@
       .item:hover { background: var(--panel2); color: var(--text); }
       .item.active { background: var(--panel2); color: var(--text); }
       .item .sub { color: var(--muted); font-size: 11px; }
+      .item .premove { float: right; opacity: 0; cursor: pointer; padding: 0 4px; color: var(--dim); font-size: 15px; line-height: 1; }
+      .item:hover .premove { opacity: 0.55; }
+      .item .premove:hover { opacity: 1; color: var(--warn, #ff9b6b); }
 
       /* Chat main */
       .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -203,10 +206,11 @@
       <!-- PROJECTS -->
       <div class="view hidden" id="view-projects">
         <aside class="sidebar">
-          <div class="list-title">Open a folder</div>
+          <div class="list-title">Open or create a folder</div>
           <div class="pfolder">
             <input id="folderInput" placeholder="path to a project…" spellcheck="false" />
             <button id="folderOpen">Open</button>
+            <button id="folderNew" title="Create a new project folder">+ New</button>
           </div>
           <div class="list-title">Projects</div>
           <div class="scroll" id="projects"></div>
@@ -298,6 +302,19 @@
         <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
           <button id="nameModalCancel" style="background:var(--panel2); color:var(--dim); border:1px solid var(--border); border-radius:7px; padding:6px 14px; cursor:pointer;">Cancel</button>
           <button id="nameModalOk" style="background:var(--accent); color:#fff; border:none; border-radius:7px; padding:6px 16px; cursor:pointer;">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Remove-project confirm: keep files vs delete files -->
+    <div id="removeModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:60; align-items:center; justify-content:center;">
+      <div style="background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px 20px; width:min(460px,92vw);">
+        <div id="removeModalTitle" style="font-size:14px; margin-bottom:8px; color:var(--text);">Remove project</div>
+        <div id="removeModalBody" style="font-size:12.5px; color:var(--dim); margin-bottom:16px; line-height:1.6;"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
+          <button id="removeCancel" style="background:var(--panel2); color:var(--dim); border:1px solid var(--border); border-radius:7px; padding:6px 14px; cursor:pointer;">Cancel</button>
+          <button id="removeFromList" style="background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:6px 14px; cursor:pointer;">Remove from list (keep files)</button>
+          <button id="removeDeleteFiles" style="background:#7a1f1f; color:#ffd9d0; border:1px solid #a33; border-radius:7px; padding:6px 14px; cursor:pointer;">Delete files</button>
         </div>
       </div>
     </div>
@@ -499,8 +516,10 @@
             const running = terminals.has(path) ? '<span class="run-dot" title="running"></span>' : "";
             d.className = "item" + (path === activeCwd ? " active" : "");
             d.dataset.path = path;
-            d.innerHTML = `${esc(name)}${running} <span class="sub">${esc(path || "")}</span>`;
+            d.innerHTML = `<span class="premove" title="Remove project">×</span>${esc(name)}${running} <span class="sub">${esc(path || "")}</span>`;
             d.onclick = () => selectProject(path);
+            const rm = d.querySelector(".premove");
+            if (rm) rm.onclick = (e) => { e.stopPropagation(); removeProject(path, name); };
             el.appendChild(d);
           };
           if (cw.cwd) addItem(cw.name, cw.cwd);
@@ -584,6 +603,50 @@
       }
 
       $("folderOpen").onclick = () => selectProject($("folderInput").value.trim());
+
+      // Create a new project folder. A bare name is created under the path in the box (or the
+      // active project); a full path (C:\… or /…) is used as-is.
+      async function newProject() {
+        const base = ($("folderInput").value.trim() || activeCwd || "").replace(/[\\/]+$/, "");
+        const name = await askText(base ? `New project folder name (created under ${base}), or paste a full path:` : "Full path for the new project folder:", "");
+        if (!name || !name.trim()) return;
+        let path = name.trim();
+        const isAbs = /^([a-zA-Z]:[\\/]|[\\/])/.test(path);
+        if (!isAbs) { if (!base) return; path = base + "/" + path; }
+        try {
+          const r = await (await fetch("/api/projects/new", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) })).json();
+          if (r.error) { await askText("Could not create project: " + r.error, ""); return; }
+          await loadProjects();
+          selectProject(r.path);
+        } catch (e) { await askText("Could not create project: " + e.message, ""); }
+      }
+      $("folderNew").onclick = newProject;
+
+      // Remove a project: keep files (drop from list) or delete files (guarded on the server,
+      // plus a typed confirmation here for the destructive path).
+      function removeProject(path, name) {
+        const modal = $("removeModal");
+        $("removeModalTitle").textContent = `Remove “${name}”?`;
+        $("removeModalBody").innerHTML = `<code>${esc(path)}</code><br><br>Keep the files on disk (just remove it from this list), or permanently delete the folder?`;
+        modal.style.display = "flex";
+        const close = () => { modal.style.display = "none"; $("removeCancel").onclick = null; $("removeFromList").onclick = null; $("removeDeleteFiles").onclick = null; };
+        $("removeCancel").onclick = close;
+        $("removeFromList").onclick = () => { close(); doRemove(path, false); };
+        $("removeDeleteFiles").onclick = async () => {
+          close();
+          const sure = await askText(`⚠ This permanently deletes ${path} and everything in it. Type DELETE to confirm:`, "");
+          if ((sure || "").trim().toUpperCase() !== "DELETE") return;
+          doRemove(path, true);
+        };
+      }
+      async function doRemove(path, deleteFiles) {
+        try {
+          const r = await (await fetch("/api/projects/remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, deleteFiles }) })).json();
+          if (r.error) { await askText("Could not remove project: " + r.error, ""); return; }
+        } catch (e) { await askText("Could not remove project: " + e.message, ""); return; }
+        if (terminals.has(path)) closeTerminal(path); // closeTerminal also refreshes the list
+        else loadProjects();
+      }
       $("folderInput").addEventListener("keydown", (e) => { if (e.key === "Enter") selectProject($("folderInput").value.trim()); });
       $("termRestart").onclick = () => { if (activeCwd) { const c = activeCwd; closeTerminal(c); openTerminal(c); } };
       $("termClose").onclick = () => activeCwd && closeTerminal(activeCwd);

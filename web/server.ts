@@ -3,7 +3,8 @@ import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { CONFIG_PATH, readApiKey, readApiKeys, keyCooldownUntil, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, removeModelFromChain, modelMissingKey, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
-import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
+import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, deleteProjectByPath, createSession, addMessage, setSessionTitle } from '../src/db.js';
+import { APP_DIR } from '../src/config.js';
 import { runResilientChain, runAgentChain, runAgent, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from '../src/orchestrator.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
@@ -659,6 +660,46 @@ const server = createServer(async (req, res) => {
         json(res, 200, { projects: [], error: e.message });
       }
       return;
+    }
+
+    // Create a new project folder (and register it if a DB is configured).
+    if (req.method === 'POST' && url.pathname === '/api/projects/new') {
+      const { path: rawPath } = await readBody(req);
+      if (!rawPath || typeof rawPath !== 'string') return json(res, 400, { error: 'no path' });
+      const abs = resolve(rawPath.trim());
+      try {
+        if (existsSync(abs) && !statSync(abs).isDirectory()) return json(res, 400, { error: 'a file already exists at that path' });
+        mkdirSync(abs, { recursive: true });
+        if (dbConfigured()) await upsertProject(abs, basename(abs) || abs).catch(() => {});
+        return json(res, 200, { ok: true, path: abs, name: basename(abs) || abs });
+      } catch (e: any) {
+        return json(res, 500, { error: e.message });
+      }
+    }
+
+    // Remove a project. deleteFiles=false → just drop it from the list (keep files on disk);
+    // deleteFiles=true → also permanently delete the folder (heavily guarded below).
+    if (req.method === 'POST' && url.pathname === '/api/projects/remove') {
+      const { path: rawPath, deleteFiles } = await readBody(req);
+      if (!rawPath || typeof rawPath !== 'string') return json(res, 400, { error: 'no path' });
+      const abs = resolve(rawPath.trim());
+      if (deleteFiles) {
+        // Guardrails: never delete a filesystem root, the app's own directory, or any ancestor
+        // of it (which would nuke the running app), and only delete an existing directory.
+        const app = resolve(APP_DIR);
+        const isRoot = dirname(abs) === abs; // e.g. C:\ or /
+        const hitsApp = app === abs || app.startsWith(abs + sep);
+        if (isRoot || hitsApp) return json(res, 400, { error: 'Refusing to delete this path (it is a drive root or contains Codigo itself).' });
+        if (!existsSync(abs)) return json(res, 400, { error: 'folder does not exist' });
+        if (!statSync(abs).isDirectory()) return json(res, 400, { error: 'not a directory' });
+        try {
+          rmSync(abs, { recursive: true, force: true });
+        } catch (e: any) {
+          return json(res, 500, { error: 'delete failed: ' + e.message });
+        }
+      }
+      if (dbConfigured()) await deleteProjectByPath(abs).catch(() => {});
+      return json(res, 200, { ok: true, deletedFiles: !!deleteFiles });
     }
     let mm: RegExpMatchArray | null;
     if (req.method === 'GET' && (mm = url.pathname.match(/^\/api\/projects\/(\d+)\/sessions$/))) {
