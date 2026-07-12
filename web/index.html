@@ -757,6 +757,26 @@
         if (!s.openrouterApiKey) { $("copyKeyStatus").textContent = "no key set"; $("copyKeyStatus").style.color = "var(--warn)"; setTimeout(()=>$("copyKeyStatus").textContent="",1500); return; }
         copyToClipboard(s.openrouterApiKey, $("copyKeyStatus"));
       });
+      // Warn (as you type) if a key doesn't start with its provider's expected prefix —
+      // catches pasting a key into the wrong field before you Save.
+      const KEY_PREFIXES = {
+        keyInput: ["sk-or-"],
+        nvidiaInput: ["nvapi-"],
+        groqInput: ["gsk_"],
+        githubInput: ["ghp_", "github_pat_", "gho_"],
+        geminiInput: ["AIza"],
+        // julesInput: no fixed prefix — skip.
+      };
+      function validatePrefix(inputId, statusId) {
+        const el = $(statusId); if (!el) return;
+        const v = ($(inputId).value || "").trim();
+        const pre = KEY_PREFIXES[inputId];
+        if (!v || !pre) { el.textContent = ""; return; }
+        if (pre.some((p) => v.startsWith(p))) { el.textContent = ""; }
+        else { el.textContent = "⚠ expected " + pre.join(" or ") + "…"; el.style.color = "var(--warn)"; }
+      }
+      $("keyInput").addEventListener("input", () => validatePrefix("keyInput", "copyKeyStatus"));
+
       // Generic show/copy for the other provider keys (same behavior as OpenRouter above).
       [
         ["nvidiaInput", "nvidiaShow", "nvidiaCopy", "nvidiaCopyStatus", "nvidiaApiKey"],
@@ -766,7 +786,7 @@
         ["julesInput", "julesShow", "julesCopy", "julesCopyStatus", "julesApiKey"],
       ].forEach(([inputId, showId, copyId, copyStatusId, secretKey]) => {
         const inp = $(inputId);
-        inp.addEventListener("input", () => (inp.dataset.edited = "1"));
+        inp.addEventListener("input", () => { inp.dataset.edited = "1"; validatePrefix(inputId, copyStatusId); });
         $(showId).addEventListener("change", async (e) => {
           if (e.target.checked) { const s = await reveal(); if (s[secretKey]) inp.value = s[secretKey]; inp.type = "text"; }
           else { inp.type = "password"; if (!inp.dataset.edited) inp.value = ""; }
