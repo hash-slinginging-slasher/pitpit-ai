@@ -44,6 +44,11 @@ const PLAN_INSTRUCTIONS = [
   'concrete steps that a coder agent will execute one at a time.',
   'Rules: output ONLY a numbered list (between 1 and 8 steps). Each line is ONE actionable',
   'instruction, specific to this task. No preamble, no explanation, no code — just the list.',
+  'Each step must be a concrete change to the code or files for THIS task (e.g. "add the',
+  'PageControl interface in schema.ts", "generate the _meta endpoint in server.ts"). Do NOT',
+  'include generic filler steps like "confirm the task", "identify the language", "set up the',
+  'environment", "test the code", or "document" unless the task explicitly asks for them —',
+  'those waste steps and make the plan look done before any real work happens.',
 ].join(' ');
 
 const REVIEW_INSTRUCTIONS = [
@@ -68,14 +73,17 @@ function parsePlan(text: string): string[] | null {
 }
 
 function parseReview(text: string): { status: 'done' | 'failed' | 'task-complete'; note: string; next: string | null } {
-  const statusM = text.match(/STATUS:\s*(task-complete|complete|done|failed)/i);
+  const statusLine = (text.match(/STATUS:\s*(.+)/i)?.[1] ?? '').trim().toLowerCase();
   const noteM = text.match(/NOTE:\s*(.+)/i);
   const nextM = text.match(/NEXT:\s*(.+)/i);
+  // Only an EXPLICIT "task-complete" ends the whole plan. Weak reviewers routinely write
+  // "complete"/"completed"/"done" to mean THIS STEP finished — treating that as whole-task
+  // completion is what made the orchestrator bail after step 1. So "complete"/"done" alone →
+  // this step is done (keep going); the task ends only on an unambiguous task-complete signal.
   let status: 'done' | 'failed' | 'task-complete' = 'done';
-  if (statusM) {
-    const s = statusM[1].toLowerCase();
-    status = s === 'failed' ? 'failed' : s.startsWith('task-complete') || s === 'complete' ? 'task-complete' : 'done';
-  }
+  if (/\bfail(ed|ure|ing)?\b|\berror\b|\bblocked\b/.test(statusLine)) status = 'failed';
+  else if (/task[-_ ]?complete|entire task|whole task|all steps? (are )?(done|complete)/.test(statusLine))
+    status = 'task-complete';
   const next = nextM && !/^(none|n\/a|-)?\.?$/i.test(nextM[1].trim()) ? nextM[1].trim().slice(0, 200) : null;
   return { status, note: (noteM?.[1] ?? '').trim().slice(0, 200), next };
 }
@@ -226,7 +234,10 @@ export async function runOrchestrated(
         try { added.cardId = addTask(boardCwd, added.title, { status: 'todo', by: 'orchestrator' }).id; } catch { /* ignore */ }
         ledger.push(added);
       }
-      if (review.status === 'task-complete') taskComplete = true;
+      // Honor an early "task-complete" only after real progress. A weak local reviewer will
+      // otherwise declare victory after step 1 of a multi-step plan (the exact symptom users
+      // hit). Single-step plans may complete immediately; multi-step plans need ≥2 executed.
+      if (review.status === 'task-complete' && (ledger.length <= 1 || executed >= 2)) taskComplete = true;
     } catch (err) {
       if (isAbortError(err, options?.signal)) throw err;
       // review failed → keep the coder's own verdict (done/failed) and continue
