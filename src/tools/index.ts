@@ -15,6 +15,7 @@ import { viewImageTool } from './view-image.js';
 import { viewDocumentTool } from './view-document.js';
 import { webFetchTool } from './web-fetch.js';
 import { generateImageTool } from './generate-image.js';
+import { brainNoteTool } from './brain-note.js';
 
 export const tools = [
   // File operations
@@ -43,4 +44,7 @@ export const tools = [
   // Web
   webFetchTool,
   serverTool({ type: 'openrouter:web_search' }),
+
+  // Project brain (second brain)
+  brainNoteTool,
 ];

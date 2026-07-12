@@ -7,6 +7,7 @@ import {
   type AgentEvent,
   type RunOptions,
 } from './agent.js';
+import { brainContext } from './brain.js';
 
 /**
  * Orchestration: a reliable "orchestrator" model plans a task into a checklist and
@@ -117,11 +118,13 @@ export async function runOrchestrated(
     }
   };
 
-  // 1) PLAN
+  // 1) PLAN — informed by the project brain (durable notes about this project).
   abortCheck();
+  const planBrain = brainContext(process.cwd(), task);
   let plan: string[] | null = null;
   try {
-    const planText = await orchestratorSay(config, orchestratorChain, task, PLAN_INSTRUCTIONS, options?.signal);
+    const planInput = (planBrain ? `${planBrain}\n\n---\n\n` : '') + task;
+    const planText = await orchestratorSay(config, orchestratorChain, planInput, PLAN_INSTRUCTIONS, options?.signal);
     plan = parsePlan(planText);
   } catch (err) {
     if (isAbortError(err, options?.signal)) throw err;
@@ -144,8 +147,11 @@ export async function runOrchestrated(
     executed++;
     emit({ type: 'step', phase: 'start', index: i, total: ledger.length, title: step.title });
 
-    // Delegate the step to the (resilient) coder chain, with the ledger for context.
+    // Delegate the step to the (resilient) coder chain, with the ledger + the brain notes
+    // relevant to THIS step (the orchestrator handing project details down to the coder).
+    const stepBrain = brainContext(process.cwd(), `${task}\n${step.title}`);
     const stepPrompt =
+      (stepBrain ? `${stepBrain}\n\n---\n\n` : '') +
       `${ledgerView(task, ledger)}\n\n` +
       `Now do STEP ${i + 1} only: ${step.title}\n` +
       `The files on disk already reflect any earlier steps. Focus on THIS step; when done, ` +

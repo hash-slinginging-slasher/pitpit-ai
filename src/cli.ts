@@ -4,6 +4,7 @@ import { resolve, basename } from 'path';
 import { loadConfig, readAgents, updateConfigFile, providerOf, demoteModelInChain, CONFIG_PATH, type AgentConfig } from './config.js';
 import { runAgentChain, runResilientChain, isAbortError, needsUserAction, type ChatMessage, type AgentEvent } from './agent.js';
 import { runOrchestrated } from './orchestrator.js';
+import { brainContext, brainHitCount } from './brain.js';
 import { setShellApproval } from './tools/shell.js';
 import { dbConfigured, upsertProject, createSession, addMessage, setSessionTitle, listSessions, getSessionWithMessages, getProjectMemory, saveProjectMemory, clearProjectMemory } from './db.js';
 import { hasGit, isRepo, initRepo, commitAll, recentCommits, AGENT_AUTHOR } from './git.js';
@@ -285,6 +286,14 @@ async function main() {
         `do NOT search files or say you lack the information when the answer is here.\n\n${mem.join('\n\n')}`;
     }
     if (ctx) sp += `\n\n# Project context (from ${CONTEXT_FILE})\n${ctx}`;
+    // Brain: durable project knowledge the agent maintains + reads (relevant notes are
+    // injected per turn/step when present). Nudge the agent to keep it up to date.
+    sp +=
+      `\n\n# Project brain\n` +
+      `This project has a long-term knowledge base at .codigo/brain/ (markdown notes). Relevant notes ` +
+      `are given to you automatically when they exist. When you make a lasting decision, learn a durable ` +
+      `fact, or hit a gotcha worth remembering, record it with the save_note tool so future sessions and ` +
+      `other coders benefit. Don't note transient/step-by-step progress — only durable knowledge.`;
     // Advertise available skills (name + description). The full instructions are inlined
     // only when the user invokes one with @<name>, keeping the prompt small.
     const skills = loadSkillsFor(workDir);
@@ -856,9 +865,21 @@ async function main() {
             console.log(`\n${C.dim}  … ${shortName(model)} hit the step cap — continuing the task (not done yet)${C.reset}`);
         },
       };
+      // Non-orchestrated coder turn: fold the relevant project-brain notes into the input.
+      // (The orchestrator does its own brain retrieval per plan + per step.)
+      let resilientInput: string | ChatMessage[] = agentInput;
+      if (!useOrchestrator && !isInit) {
+        const brain = brainContext(workDir, turnContent);
+        if (brain) {
+          console.log(`  ${C.magenta}🧠 brain: ${brainHitCount(workDir, turnContent)} relevant note(s) in context${C.reset}`);
+          resilientInput = Array.isArray(agentInput)
+            ? [{ role: 'system', content: brain }, ...agentInput]
+            : `${brain}\n\n---\n\n${turnContent}`;
+        }
+      }
       const result = useOrchestrator
         ? await runOrchestrated(config, orchestratorChain, activeChain, turnContent, sharedHandlers)
-        : await runResilientChain(config, activeChain, agentInput, sharedHandlers);
+        : await runResilientChain(config, activeChain, resilientInput, sharedHandlers);
       renderer.done();
       if (isInit) {
         const ok = rebuildSystemPrompt();
