@@ -5,9 +5,8 @@ import { fileURLToPath } from 'url';
 import { CONFIG_PATH, readApiKey, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
-import { runOrchestrated } from '../src/orchestrator.js';
 import { hasGit, isRepo, commitAll, fileHistory, showFileAt, fileDirty, AGENT_AUTHOR, USER_AUTHOR } from '../src/git.js';
-import { loadSkillsFor, skillIndex } from '../src/skills.js';
+import { loadSkillsFor } from '../src/skills.js';
 import { resolveMentions } from '../src/mentions.js';
 import { WebSocketServer } from 'ws';
 import * as pty from 'node-pty';
@@ -138,36 +137,18 @@ async function fetchGithubModels() {
   });
 }
 
-/** Read the project's AGENTS.md (if any) from the working dir — same context the CLI loads. */
-function readAgentsContext(cwd: string): string {
-  const p = resolve(cwd, 'AGENTS.md');
-  try {
-    if (existsSync(p)) return readFileSync(p, 'utf-8').slice(0, 12000);
-  } catch {
-    /* ignore */
-  }
-  return '';
-}
-
 /**
- * Build the chat system prompt for the web app: base prompt + available skills +
- * AGENTS.md project context. Mirrors what the CLI assembles (minus DB project memory,
- * added later), so the GUI agent behaves like the terminal one.
+ * System prompt for the Chat tab — a plain general assistant, NOT a project coder.
+ * (The Projects-tab terminal is where the real project-scoped coder/orchestrator lives.)
  */
-function buildChatSystemPrompt(cwd: string): string {
-  const base = loadConfig({}, { skipApiKey: true }).systemPrompt;
-  let sp = base;
-  const skills = loadSkillsFor(cwd);
-  if (skills.length) {
-    sp +=
-      `\n\n# Skills available\n` +
-      `Reusable instruction sets. When the user references one by name, follow its instructions.\n\n` +
-      skillIndex(skills);
-  }
-  const ctx = readAgentsContext(cwd);
-  if (ctx) sp += `\n\n# Project context (from AGENTS.md)\n${ctx}`;
-  return sp;
-}
+const GENERAL_SYSTEM = [
+  'You are Codigo, a helpful, friendly general assistant.',
+  'Answer questions directly, do math, explain things, write and format text, and help with coding when asked. Be concise.',
+  'You have tools (file read/write, shell, etc.) but use them ONLY when the task clearly needs them —',
+  'for example when the user explicitly asks you to create, edit, or save a file.',
+  'For ordinary questions, math, or formatting text, just answer directly in your reply: do NOT explore the',
+  'filesystem, do NOT assume the user is working on a coding project, and do NOT make a plan or checklist.',
+].join(' ');
 
 /** Read a request's JSON body. */
 async function readBody(req: import('http').IncomingMessage): Promise<any> {
@@ -595,7 +576,9 @@ const server = createServer(async (req, res) => {
         // Only demand the OpenRouter key if the chain actually contains an OpenRouter model.
         const needsKey = chain.some((m) => providerOf(m) === 'openrouter');
         const config = loadConfig({}, { skipApiKey: !needsKey });
-        config.systemPrompt = buildChatSystemPrompt(cwd);
+        // Chat is a general assistant, not a project coder — give it a light prompt + the
+        // current date/time so "what day is it?" works.
+        config.systemPrompt = `${GENERAL_SYSTEM}\n\nThe current date and time is ${new Date().toString()}.`;
 
         // Expand @mentions (skills + files) exactly like the CLI.
         const resolved = await resolveMentions(message, cwd, loadSkillsFor(cwd));
@@ -617,22 +600,20 @@ const server = createServer(async (req, res) => {
           }
         }
 
-        // If an orchestrator model is configured, it plans + delegates; else run coders directly.
-        const orchestratorChain = readAgents().orchestrator;
+        // Chat runs the coder chain directly (resilient failover), NOT the orchestrator —
+        // the orchestrator's plan/delegate flow is for project tasks in the Projects terminal.
         const handlers = {
           signal: ac.signal,
           onEvent: (e: any) => send(e),
           onFailover: ({ from, to, index, error }: { from: string; to: string; index: number; error: string }) => {
-            send({ type: 'failover', from, to, index, error, action: needsUserAction(error), orchestrated: orchestratorChain.length > 0 });
+            send({ type: 'failover', from, to, index, error, action: needsUserAction(error), orchestrated: false });
             demoteModelInChain('coder', from); // deprioritize the failed coder for next tasks
             send({ type: 'demote', model: from });
           },
           onContinue: ({ model, reason }: { model: string; reason: string }) => send({ type: 'continue', model, reason }),
         };
         const fullMessages: ChatMessage[] = [...history, { role: 'user', content: resolved.text }];
-        const result = orchestratorChain.length
-          ? await runOrchestrated(config, orchestratorChain, chain, resolved.text, handlers)
-          : await runResilientChain(config, chain, fullMessages.length > 1 ? fullMessages : resolved.text, handlers);
+        const result = await runResilientChain(config, chain, fullMessages.length > 1 ? fullMessages : resolved.text, handlers);
 
         if (dbConfigured() && sessionId != null) {
           await addMessage(sessionId, 'assistant', result.text).catch(() => {});
