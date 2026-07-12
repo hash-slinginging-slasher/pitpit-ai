@@ -450,12 +450,14 @@
           case "reasoning": break;
           case "tool_call": events.innerHTML += `<div class="evt"><span class="tool">▸ ${esc(e.name)}</span> ${esc(JSON.stringify(e.args || {}).slice(0, 120))}</div>`; scrollDown(); break;
           case "tool_result": events.innerHTML += `<div class="evt">&nbsp;&nbsp;→ ${esc((e.output || "").slice(0, 160))}</div>`; break;
+          case "coder": events.innerHTML += `<div class="evt">⟢ coder ${e.index + 1}: <b>${esc(short(e.model))}</b></div>`; scrollDown(); break;
           case "failover": {
-            const why = e.action ? "rate-limited/needs action" : "failed";
+            const why = e.permanent ? "permanent error" : e.action ? "rate-limited/needs action" : "failed";
             events.innerHTML += `<div class="evt failover">! coder ${e.index} ${esc(short(e.from || ""))} ${why} — ${e.orchestrated ? "orchestrator " : ""}reassigning to coder ${e.index + 1} ${esc(short(e.to))}</div>`;
             scrollDown(); break;
           }
           case "demote": events.innerHTML += `<div class="evt">↓ moved ${esc(short(e.model))} to the bottom of the coder list</div>`; scrollDown(); break;
+          case "prune": events.innerHTML += `<div class="evt failover">✂ removed ${esc(short(e.model))} from the coder chain (permanent error)</div>`; scrollDown(); break;
           case "continue": if (e.reason === "step-cap") events.innerHTML += `<div class="evt">… ${esc(short(e.model))} hit the step cap — continuing (task not done yet)</div>`; scrollDown(); break;
           case "plan": {
             const items = e.steps.map((s, i) => `<div class="evt">${i + 1}. ${esc(s)}</div>`).join("");

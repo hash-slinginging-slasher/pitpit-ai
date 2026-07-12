@@ -2,7 +2,7 @@ import { createServer } from 'http';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync, statSync, watch } from 'fs';
 import { resolve, dirname, basename, join, sep, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_PATH, readApiKey, readApiKeys, keyCooldownUntil, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
+import { CONFIG_PATH, readApiKey, readApiKeys, keyCooldownUntil, readDatabaseUrl, saveSecrets, readAgents, saveAgentChain, demoteModelInChain, removeModelFromChain, localBaseUrl, readNvidiaKey, readGithubToken, readGroqKey, readGeminiApiKey, readJulesApiKey, nvidiaBaseUrl, githubBaseUrl, groqBaseUrl, embeddingModel, loadConfig, providerOf, AGENT_KINDS, type AgentKind } from '../src/config.js';
 import { testConnection, listProjects, listSessions, getSessionWithMessages, dbConfigured, upsertProject, createSession, addMessage, setSessionTitle } from '../src/db.js';
 import { runResilientChain, runAgentChain, isAbortError, needsUserAction, type ChatMessage } from '../src/agent.js';
 import { ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from '../src/orchestrator.js';
@@ -782,10 +782,15 @@ const server = createServer(async (req, res) => {
         const handlers = {
           signal: ac.signal,
           onEvent: (e: any) => send(e),
-          onFailover: ({ from, to, index, error }: { from: string; to: string; index: number; error: string }) => {
-            send({ type: 'failover', from, to, index, error, action: needsUserAction(error), orchestrated: false });
-            demoteModelInChain('coder', from); // deprioritize the failed coder for next tasks
-            send({ type: 'demote', model: from });
+          onFailover: ({ from, to, index, error, permanent }: { from: string; to: string; index: number; error: string; permanent?: boolean }) => {
+            send({ type: 'failover', from, to, index, error, action: needsUserAction(error), permanent: !!permanent, orchestrated: false });
+            if (permanent) {
+              removeModelFromChain('coder', from); // 403/404/413 — inaccessible, prune it entirely
+              send({ type: 'prune', model: from });
+            } else {
+              demoteModelInChain('coder', from); // deprioritize the failed coder for next tasks
+              send({ type: 'demote', model: from });
+            }
           },
           onContinue: ({ model, reason }: { model: string; reason: string }) => send({ type: 'continue', model, reason }),
         };

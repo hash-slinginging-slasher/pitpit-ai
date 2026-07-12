@@ -507,6 +507,19 @@ export function demoteModelInChain(kind: AgentKind, model: string): string[] {
   return reordered;
 }
 
+/**
+ * Remove a model from its chain entirely (persisted). Used to auto-prune a model that returns
+ * a PERMANENT error (403/404/413 — inaccessible/invalid id), which demotion can't fix since it
+ * fails every time it's reached. Returns the new chain. No-op if the model isn't present.
+ */
+export function removeModelFromChain(kind: AgentKind, model: string): string[] {
+  const chain = readAgents()[kind];
+  if (!chain.includes(model)) return chain;
+  const pruned = chain.filter((m) => m !== model);
+  saveAgentChain(kind, pruned);
+  return pruned;
+}
+
 /** Persist one agent's ordered model chain to the config file, preserving other fields. */
 export function saveAgentChain(kind: AgentKind, models: string[]): AgentChains {
   let file: any = {};

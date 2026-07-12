@@ -1,7 +1,7 @@
 import { createInterface, emitKeypressEvents, type Interface } from 'readline';
 import { watch, readFileSync, existsSync, readdirSync } from 'fs';
 import { resolve, basename } from 'path';
-import { loadConfig, readAgents, updateConfigFile, providerOf, demoteModelInChain, CONFIG_PATH, type AgentConfig } from './config.js';
+import { loadConfig, readAgents, updateConfigFile, providerOf, demoteModelInChain, removeModelFromChain, CONFIG_PATH, type AgentConfig } from './config.js';
 import { runAgentChain, runResilientChain, isAbortError, needsUserAction, type ChatMessage, type AgentEvent } from './agent.js';
 import { runOrchestrated, ORCHESTRATOR_CHAT_SYSTEM, orchestratorAskContext } from './orchestrator.js';
 import { retrieveBrain, formatBrainContext } from './brain.js';
@@ -932,19 +932,31 @@ async function main() {
             else console.log(`  ${e.phase === 'failed' ? `${C.yellow}✗` : `${C.green}✓`} step ${e.index + 1}${C.reset}${e.note ? ` ${C.dim}${e.note}${C.reset}` : ''}`);
             return;
           }
+          if (e.type === 'coder') {
+            // Show which coder model is actually doing the work.
+            console.log(`  ${C.gray}⟢ coder ${activeIndex + e.index + 1}: ${C.reset}${C.cyan}${shortName(e.model)}${C.reset}`);
+            return;
+          }
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
           renderer.handle(e);
         },
-        onFailover: ({ from, to, index, error }: { from: string; to: string; index: number; error: string }) => {
-          const why = needsUserAction(error) ? 'rate-limited/needs action' : 'failed';
+        onFailover: ({ from, to, index, error, permanent }: { from: string; to: string; index: number; error: string; permanent?: boolean }) => {
+          const why = permanent ? 'permanent error' : needsUserAction(error) ? 'rate-limited/needs action' : 'failed';
           // index is the source's 1-based position in the active sub-chain; offset by
           // activeIndex for the absolute coder number.
           console.log(
             `\n${C.yellow}  ! coder ${activeIndex + index} ${shortName(from)} ${why} — ${useOrchestrator ? 'orchestrator ' : ''}reassigning to coder ${activeIndex + index + 1} ${shortName(to)}${C.reset} ${C.dim}(${error})${C.reset}`,
           );
-          // Deprioritize the failed coder so the next task skips it until the chain cycles back.
-          demoteModelInChain('coder', from);
-          console.log(`  ${C.dim}↓ moved ${shortName(from)} to the bottom of the coder list${C.reset}`);
+          if (permanent) {
+            // 403/404/413 — the model is inaccessible/invalid and fails every time. Remove it
+            // from the chain entirely rather than demoting (which would just retry it later).
+            removeModelFromChain('coder', from);
+            console.log(`  ${C.yellow}✂ removed ${shortName(from)} from the coder chain (permanent error — fix the id or access to re-add)${C.reset}`);
+          } else {
+            // Deprioritize the failed coder so the next task skips it until the chain cycles back.
+            demoteModelInChain('coder', from);
+            console.log(`  ${C.dim}↓ moved ${shortName(from)} to the bottom of the coder list${C.reset}`);
+          }
         },
         onContinue: ({ model, reason }: { model: string; reason: 'step-cap' | 'handoff' }) => {
           if (reason === 'step-cap')

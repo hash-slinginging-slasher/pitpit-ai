@@ -25,6 +25,9 @@ export type AgentEvent =
   | { type: 'tool_call'; name: string; callId: string; args: Record<string, unknown> }
   | { type: 'tool_result'; name: string; callId: string; output: string }
   | { type: 'reasoning'; delta: string }
+  // Which coder model is actively running (emitted when a leg starts / the coder changes),
+  // so the user can see who is doing the work.
+  | { type: 'coder'; model: string; index: number }
   // Orchestrator events (only emitted when an orchestrator model is configured):
   | { type: 'plan'; steps: string[]; orchestrator: string; resumed?: boolean; source?: string }
   | { type: 'step'; phase: 'start' | 'done' | 'failed'; index: number; total: number; title: string; note?: string };
@@ -78,6 +81,19 @@ function isKeyExhausted(err: any): boolean {
   // with none of these signals is treated as a provider issue (fail over the model, don't bench).
   return /free.?models.?per.?day|rate.?limit|requests? per day|too many requests|quota|insufficient|add \d+ credits?|payment required|unauthoriz|invalid api key/i.test(
     msg,
+  );
+}
+
+/**
+ * True if a model failure is PERMANENT — the model id is inaccessible or invalid (403 Forbidden,
+ * 404 Not Found, 413 payload too large for that endpoint), so it will fail every time it's tried.
+ * Such a model should be pruned from the chain, not merely demoted (which just retries it later).
+ */
+export function isPermanentModelError(err: any): boolean {
+  const s = err?.status ?? err?.statusCode;
+  if (s === 403 || s === 404 || s === 413) return true;
+  return /\b(403|404|413)\b|forbidden|not found|payload too large|request entity too large|no endpoints?( found)?|invalid model|unknown model|model .*(not found|does not exist|is not available|unavailable)/i.test(
+    String(err?.message || ''),
   );
 }
 
@@ -315,7 +331,7 @@ export async function runAgentChain(
   models: string[],
   input: string | ChatMessage[],
   options?: RunOptions & {
-    onFailover?: (info: { from: string; to: string; index: number; error: string }) => void;
+    onFailover?: (info: { from: string; to: string; index: number; error: string; permanent?: boolean }) => void;
   },
 ) {
   if (models.length === 0) {
@@ -336,6 +352,7 @@ export async function runAgentChain(
           to: models[i + 1],
           index: i + 1,
           error: err?.message ?? String(err),
+          permanent: isPermanentModelError(err),
         });
       }
     }
@@ -359,7 +376,7 @@ export interface ResilientOptions extends RunOptions {
   maxRounds?: number;
   /** How many times to continue the SAME model on a step-cap before handing to the next. */
   maxContinuesPerModel?: number;
-  onFailover?: (info: { from: string; to: string; index: number; error: string }) => void;
+  onFailover?: (info: { from: string; to: string; index: number; error: string; permanent?: boolean }) => void;
   onContinue?: (info: { model: string; leg: number; reason: 'step-cap' | 'handoff' }) => void;
 }
 
@@ -387,6 +404,7 @@ export async function runResilientChain(
   let modelIdx = 0;
   let legs = 0;
   let continuesOnThisModel = 0;
+  let announcedModel = '';
   let last: (Awaited<ReturnType<typeof runAgentWithRetry>> & { model: string }) | null = null;
   let lastErr: any;
 
@@ -397,6 +415,11 @@ export async function runResilientChain(
       throw e;
     }
     const model = models[modelIdx];
+    // Announce who's about to run (once per coder change) so the user sees which model works.
+    if (model !== announcedModel) {
+      options?.onEvent?.({ type: 'coder', model, index: modelIdx });
+      announcedModel = model;
+    }
     try {
       const res = await runAgentWithRetry(config, model, messages, options);
       legs++;
@@ -425,7 +448,7 @@ export async function runResilientChain(
       if (isAbortError(err, options?.signal)) throw err;
       const nextIdx = modelIdx + 1;
       if (nextIdx < models.length) {
-        options?.onFailover?.({ from: model, to: models[nextIdx], index: nextIdx, error: err?.message ?? String(err) });
+        options?.onFailover?.({ from: model, to: models[nextIdx], index: nextIdx, error: err?.message ?? String(err), permanent: isPermanentModelError(err) });
         messages.push({ role: 'user', content: HANDOFF_PROMPT });
       }
       modelIdx = nextIdx;
