@@ -85,6 +85,11 @@ async function createWindow() {
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
 
+  // Allow clipboard read/write so the terminal's Ctrl+V / right-click paste works.
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => {
+    cb(permission === 'clipboard-read' || permission === 'clipboard-sanitized-write' || permission === 'clipboard-write');
+  });
+
   // Open external links (http/https not to our server) in the system browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith(`http://localhost:${PORT}`)) {

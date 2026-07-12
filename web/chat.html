@@ -430,6 +430,22 @@
         ws.onopen = () => setTimeout(() => fitTerm(rec), 80);
         ws.onclose = () => term.write("\r\n\x1b[90m[session ended — press restart]\x1b[0m\r\n");
         term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: "in", d })); });
+
+        // Clipboard: Ctrl/Cmd+V or right-click to paste; Ctrl/Cmd+Shift+C to copy a selection
+        // (plain Ctrl+C stays the terminal interrupt). Right-click copies if text is selected.
+        const pasteClip = () => navigator.clipboard.readText().then((t) => { if (t) term.paste(t); }).catch(() => {});
+        const copySel = () => { const s = term.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); return !!s; };
+        term.attachCustomKeyEventHandler((e) => {
+          const mod = e.ctrlKey || e.metaKey;
+          if (e.type === "keydown" && mod && !e.shiftKey && (e.key === "v" || e.key === "V")) { e.preventDefault(); pasteClip(); return false; }
+          if (e.type === "keydown" && mod && e.shiftKey && (e.key === "c" || e.key === "C")) { e.preventDefault(); copySel(); return false; }
+          return true;
+        });
+        el.addEventListener("contextmenu", (ev) => {
+          ev.preventDefault();
+          if (copySel()) term.clearSelection();
+          else pasteClip();
+        });
         terminals.set(cwd, rec);
         loadProjects(); // refresh running-dots
       }
