@@ -564,6 +564,7 @@
       function selectProject(cwd) {
         if (!cwd) return;
         activeCwd = cwd; highlightActive();
+        $("termCwd").textContent = cwd; // header always shows the active project, any tab
         if (mainMode === "files") {
           filesCwd = cwd; openFilePath = null; loadTree(); connectFilesWs();
           $("fileContent").value = ""; $("editPath").textContent = "no file open";
