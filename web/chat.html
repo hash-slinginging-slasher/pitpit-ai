@@ -130,6 +130,14 @@
       #brainSvg circle.active { fill: var(--good); }
       .term-instance { position: absolute; inset: 0; padding: 6px 8px; }
       .term-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; text-align: center; padding: 20px; }
+      /* Right-click menu for the terminal (copy/paste/select all/clear) */
+      .ctxmenu { position: fixed; z-index: 9999; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; min-width: 158px; box-shadow: 0 10px 28px rgba(0,0,0,.55); }
+      .ctxmenu button { display: flex; justify-content: space-between; align-items: center; gap: 18px; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 7px 10px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+      .ctxmenu button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+      .ctxmenu button:disabled { color: var(--muted); cursor: default; }
+      .ctxmenu button .key { color: var(--muted); font-size: 11px; }
+      .ctxmenu button:hover:not(:disabled) .key { color: #fff; }
+      .ctxmenu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 2px; }
       .item .run-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-left: 6px; vertical-align: middle; }
 
       /* Terminal/Files sub-tabs + controls */
@@ -503,6 +511,58 @@
       const terminals = new Map(); // cwd -> { term, fit, ws, el }
       let activeCwd = null;
 
+      // ---- Terminal clipboard: robust copy/paste + a right-click context menu ----
+      async function termCopy(term) {
+        const sel = term.getSelection();
+        if (!sel) return false;
+        try { await navigator.clipboard.writeText(sel); return true; }
+        catch (e) {
+          // Fallback for when the async Clipboard API is blocked (execCommand needs a live selection).
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = sel; ta.style.position = "fixed"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.focus(); ta.select();
+            const ok = document.execCommand("copy"); ta.remove(); return ok;
+          } catch (e2) { return false; }
+        }
+      }
+      async function termPaste(term) {
+        try { const t = await navigator.clipboard.readText(); if (t) term.paste(t); return true; }
+        catch (e) { return false; }
+      }
+
+      // One shared menu element, positioned at the cursor on right-click.
+      let ctxMenuEl = null;
+      function hideTermMenu() { if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; } }
+      function showTermMenu(x, y, term) {
+        hideTermMenu();
+        const hasSel = !!term.getSelection();
+        const menu = document.createElement("div");
+        menu.className = "ctxmenu";
+        const item = (label, keyHint, enabled, onClick) => {
+          const b = document.createElement("button");
+          b.innerHTML = `<span>${label}</span><span class="key">${keyHint || ""}</span>`;
+          b.disabled = !enabled;
+          if (enabled) b.onclick = () => { hideTermMenu(); onClick(); };
+          return b;
+        };
+        menu.appendChild(item("Copy", "Ctrl+Shift+C", hasSel, () => termCopy(term).then(() => term.clearSelection())));
+        menu.appendChild(item("Paste", "Ctrl+V", true, () => termPaste(term)));
+        const hr = document.createElement("hr"); menu.appendChild(hr);
+        menu.appendChild(item("Select all", "", true, () => term.selectAll()));
+        menu.appendChild(item("Clear", "", true, () => term.clear()));
+        document.body.appendChild(menu);
+        // Keep the menu on-screen.
+        const r = menu.getBoundingClientRect();
+        menu.style.left = Math.min(x, window.innerWidth - r.width - 6) + "px";
+        menu.style.top = Math.min(y, window.innerHeight - r.height - 6) + "px";
+        ctxMenuEl = menu;
+      }
+      // Dismiss on any outside interaction.
+      document.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target)) hideTermMenu(); });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTermMenu(); });
+      window.addEventListener("blur", hideTermMenu);
+
       async function loadProjects() {
         try {
           const [pj, cw] = await Promise.all([
@@ -567,21 +627,15 @@
         ws.onclose = () => term.write("\r\n\x1b[90m[session ended — press restart]\x1b[0m\r\n");
         term.onData((d) => { if (ws.readyState === 1) ws.send(JSON.stringify({ t: "in", d })); });
 
-        // Clipboard: Ctrl/Cmd+V or right-click to paste; Ctrl/Cmd+Shift+C to copy a selection
-        // (plain Ctrl+C stays the terminal interrupt). Right-click copies if text is selected.
-        const pasteClip = () => navigator.clipboard.readText().then((t) => { if (t) term.paste(t); }).catch(() => {});
-        const copySel = () => { const s = term.getSelection(); if (s) navigator.clipboard.writeText(s).catch(() => {}); return !!s; };
+        // Clipboard shortcuts: Ctrl/Cmd+V pastes; Ctrl/Cmd+Shift+C copies the selection
+        // (plain Ctrl+C stays the terminal interrupt). Right-click opens a Copy/Paste menu.
         term.attachCustomKeyEventHandler((e) => {
           const mod = e.ctrlKey || e.metaKey;
-          if (e.type === "keydown" && mod && !e.shiftKey && (e.key === "v" || e.key === "V")) { e.preventDefault(); pasteClip(); return false; }
-          if (e.type === "keydown" && mod && e.shiftKey && (e.key === "c" || e.key === "C")) { e.preventDefault(); copySel(); return false; }
+          if (e.type === "keydown" && mod && !e.shiftKey && (e.key === "v" || e.key === "V")) { e.preventDefault(); termPaste(term); return false; }
+          if (e.type === "keydown" && mod && e.shiftKey && (e.key === "c" || e.key === "C")) { e.preventDefault(); termCopy(term).then(() => term.clearSelection()); return false; }
           return true;
         });
-        el.addEventListener("contextmenu", (ev) => {
-          ev.preventDefault();
-          if (copySel()) term.clearSelection();
-          else pasteClip();
-        });
+        el.addEventListener("contextmenu", (ev) => { ev.preventDefault(); showTermMenu(ev.clientX, ev.clientY, term); });
         terminals.set(cwd, rec);
         loadProjects(); // refresh running-dots
       }
