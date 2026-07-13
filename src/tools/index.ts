@@ -15,6 +15,7 @@ import { viewImageTool } from './view-image.js';
 import { viewDocumentTool } from './view-document.js';
 import { webFetchTool } from './web-fetch.js';
 import { docsLookupTool } from './docs-lookup.js';
+import { depsDocsTool } from './deps-docs.js';
 import { generateImageTool } from './generate-image.js';
 import { brainNoteTool } from './brain-note.js';
 import { boardTaskTool } from './board-task.js';
@@ -49,6 +50,9 @@ export const tools = [
 
   // Up-to-date library documentation (Context7)
   docsLookupTool,
+
+  // Offline docs for the project's own installed dependencies (node_modules)
+  depsDocsTool,
 
   // Project brain (second brain)
   brainNoteTool,
