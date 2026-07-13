@@ -108,6 +108,15 @@ async function streamTurn(
 ): Promise<StreamedTurn> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(auth?.extraHeaders ?? {}) };
   if (auth?.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+  // Name the host so failover/errors are meaningful across providers (local llama.cpp,
+  // NVIDIA build, GitHub Models all share this runner).
+  const host = (() => {
+    try {
+      return new URL(baseUrl).host;
+    } catch {
+      return baseUrl;
+    }
+  })();
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers,
@@ -123,15 +132,6 @@ async function streamTurn(
   });
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => '');
-    // Name the host so a failover message is meaningful across providers (this runner
-    // is shared by local llama.cpp, NVIDIA build, and GitHub Models).
-    const host = (() => {
-      try {
-        return new URL(baseUrl).host;
-      } catch {
-        return baseUrl;
-      }
-    })();
     const err: any = new Error(`${host} ${res.status} ${res.statusText}${detail ? `: ${detail.slice(0, 200)}` : ''}`);
     err.status = res.status;
     throw err;
@@ -176,6 +176,16 @@ async function streamTurn(
       } catch {
         continue;
       }
+      // Some OpenAI-compatible backends (e.g. NVIDIA build) return an upstream failure as an
+      // in-band SSE frame WITH HTTP 200 — {"error":{"message":"Internal server error","code":500}}.
+      // If we merely skip it (no choices), the turn looks like an empty SUCCESS, so a broken model
+      // silently "completes" with no output and the resilient chain never fails over. Throw instead.
+      if (json.error) {
+        const e: any = new Error(`${host} upstream error: ${json.error.message || JSON.stringify(json.error)}`);
+        e.status = json.error.code ?? json.error.status ?? 502;
+        await reader.cancel().catch(() => {});
+        throw e;
+      }
       if (json.usage) turn.usage = json.usage;
       const choice = json.choices?.[0];
       if (!choice) continue;
@@ -198,6 +208,15 @@ async function streamTurn(
     }
   }
   turn.toolCalls = turn.toolCalls.filter((t) => t && t.name);
+  // A stream that produced nothing — no text, no reasoning, no tool call — and never reported a
+  // finish reason is a broken/empty response (some endpoints return HTTP 200 with an empty body or
+  // `choices: []`). Surface it as an error so the chain fails over instead of returning "" as a
+  // successful completion. (An aborted stream is a user cancel, not a failure — leave it alone.)
+  if (!signal?.aborted && !turn.content && !turn.reasoning && turn.toolCalls.length === 0 && !turn.finishReason) {
+    const e: any = new Error(`${host} returned an empty response`);
+    e.status = 502;
+    throw e;
+  }
   return turn;
 }
 
