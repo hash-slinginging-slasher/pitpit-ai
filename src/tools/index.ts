@@ -14,6 +14,7 @@ import { shellTool } from './shell.js';
 import { viewImageTool } from './view-image.js';
 import { viewDocumentTool } from './view-document.js';
 import { webFetchTool } from './web-fetch.js';
+import { docsLookupTool } from './docs-lookup.js';
 import { generateImageTool } from './generate-image.js';
 import { brainNoteTool } from './brain-note.js';
 import { boardTaskTool } from './board-task.js';
@@ -45,6 +46,9 @@ export const tools = [
   // Web
   webFetchTool,
   serverTool({ type: 'openrouter:web_search' }),
+
+  // Up-to-date library documentation (Context7)
+  docsLookupTool,
 
   // Project brain (second brain)
   brainNoteTool,

@@ -426,6 +426,8 @@ const DEFAULTS: AgentConfig = {
     '  one call), copying each old_string EXACTLY from a fresh file_read (indentation included).',
     '- To read a PDF, spreadsheet, or CSV, use view_document; for a screenshot/image use view_image.',
     '- To read a specific web page or docs, use web_fetch; to search the web, use web_search.',
+    '- Before writing code against a library whose exact package name, imports, or API you are not',
+    '  sure of, call docs_lookup (Context7) to get its current docs — do NOT guess from memory.',
   ].join('\n'),
   maxSteps: 25,
   maxCost: 1.0,
