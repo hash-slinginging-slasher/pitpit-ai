@@ -156,7 +156,7 @@ export async function runAgent(
       options,
     );
   }
-  if (provider === 'cli-claude' || provider === 'cli-codex' || provider === 'cli-gemini' || provider === 'cli-jules') {
+  if (provider === 'cli-claude' || provider === 'cli-codex' || provider === 'cli-gemini' || provider === 'cli-jules' || provider === 'cli-opencode') {
     return runCliAgent(provider, config, model, input, options);
   }
 
