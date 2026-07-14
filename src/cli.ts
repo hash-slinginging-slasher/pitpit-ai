@@ -183,6 +183,7 @@ const THINKING_WORDS = [
   'wrangling gremlins', 'percolating', 'noodling', 'conjuring', 'vibing',
   'poking the hamster wheel', 'aligning the flux', 'greasing the gears',
   'counting to potato', 'rerouting the tubes', 'feeding the goblins',
+  'pondering', 'crunching', 'brewing', 'marinating the logic', 'whisking bytes',
 ];
 const pickWord = () => THINKING_WORDS[Math.floor(Math.random() * THINKING_WORDS.length)];
 
@@ -230,6 +231,14 @@ function makeRenderer(showReasoning: () => boolean) {
       atLineStart = true;
     },
     done() {
+      stopSpinner();
+    },
+    // Start the whimsical spinner while waiting for the model (any real output clears it).
+    think() {
+      startSpinner();
+    },
+    // Clear the spinner before printing a status line, without ending the turn.
+    clearThinking() {
       stopSpinner();
     },
     handle(e: AgentEvent) {
@@ -850,6 +859,7 @@ async function main() {
       console.log(`\n  ${C.magenta}▣ orchestrator${C.reset} ${C.dim}(${shortName(orchestratorChain[0])})${C.reset}`);
       console.log(`  ${C.dim}(Esc to stop)${C.reset}\n`);
       renderer.reset();
+      renderer.think();
       turnActive = true;
       activeAbort = new AbortController();
       try {
@@ -943,6 +953,9 @@ async function main() {
     turnActive = true; // suppress live "set from UI" chain announcements during the turn
     activeAbort = new AbortController(); // Esc aborts this turn
     console.log(`  ${C.dim}(Esc to stop)${C.reset}`);
+    renderer.think(); // whimsical spinner until the first real output arrives
+    // Print a status line without stomping the spinner: clear it, log, then re-arm (work continues).
+    const statusLine = (msg: string) => { renderer.clearThinking(); console.log(msg); renderer.think(); };
     try {
       const agentInput = isInit ? turnContent : messages.length > 1 ? messages : turnContent;
       // If an orchestrator model is configured, it plans the task and delegates to the
@@ -953,32 +966,35 @@ async function main() {
         signal: activeAbort.signal,
         onEvent: (e: AgentEvent) => {
           if (e.type === 'plan') {
+            renderer.clearThinking();
             const prov = e.source ? `${C.dim} · from ${e.source}${C.reset}` : '';
             const verb = e.resumed ? 'resuming plan' : 'plan';
             console.log(`\n  ${C.magenta}▣ ${verb}${C.reset} ${C.dim}(orchestrator: ${shortName(e.orchestrator)})${C.reset}${prov}`);
             if (e.resumed) console.log(`  ${C.dim}continuing ${e.steps.length} open board card(s)${C.reset}`);
             e.steps.forEach((s, i) => console.log(`  ${C.dim}${i + 1}.${C.reset} ${s}`));
+            renderer.think();
             return;
           }
           if (e.type === 'step') {
-            if (e.phase === 'start') console.log(`\n  ${C.cyan}▶ step ${e.index + 1}/${e.total}${C.reset} ${C.dim}${e.title}${C.reset}`);
-            else console.log(`  ${e.phase === 'failed' ? `${C.yellow}✗` : `${C.green}✓`} step ${e.index + 1}${C.reset}${e.note ? ` ${C.dim}${e.note}${C.reset}` : ''}`);
+            if (e.phase === 'start') statusLine(`\n  ${C.cyan}▶ step ${e.index + 1}/${e.total}${C.reset} ${C.dim}${e.title}${C.reset}`);
+            else statusLine(`  ${e.phase === 'failed' ? `${C.yellow}✗` : `${C.green}✓`} step ${e.index + 1}${C.reset}${e.note ? ` ${C.dim}${e.note}${C.reset}` : ''}`);
             return;
           }
           if (e.type === 'coder') {
             // Show which coder model is actually doing the work.
-            console.log(`  ${C.gray}⟢ coder ${activeIndex + e.index + 1}: ${C.reset}${C.cyan}${shortName(e.model)}${C.reset}`);
+            statusLine(`  ${C.gray}⟢ coder ${activeIndex + e.index + 1}: ${C.reset}${C.cyan}${shortName(e.model)}${C.reset}`);
             return;
           }
           if (e.type === 'delegate') {
             // The orchestrator handing a task to a coder subagent.
-            console.log(`\n  ${C.magenta}⇢ delegating to a coder${C.reset} ${C.dim}${e.task}${C.reset}`);
+            statusLine(`\n  ${C.magenta}⇢ delegating to a coder${C.reset} ${C.dim}${e.task}${C.reset}`);
             return;
           }
           if (e.type === 'tool_call' && MUTATING_TOOLS.has(e.name)) mutated.add(e.name);
           renderer.handle(e);
         },
         onFailover: ({ from, to, index, error, permanent }: { from: string; to: string; index: number; error: string; permanent?: boolean }) => {
+          renderer.clearThinking();
           const why = permanent ? 'permanent error' : needsUserAction(error) ? 'rate-limited/needs action' : 'failed';
           // index is the source's 1-based position in the active sub-chain; offset by
           // activeIndex for the absolute coder number.
@@ -995,10 +1011,11 @@ async function main() {
             demoteModelInChain('coder', from);
             console.log(`  ${C.dim}↓ moved ${shortName(from)} to the bottom of the coder list${C.reset}`);
           }
+          renderer.think(); // resume the spinner while the next model spins up
         },
         onContinue: ({ model, reason }: { model: string; reason: 'step-cap' | 'handoff' }) => {
           if (reason === 'step-cap')
-            console.log(`\n${C.dim}  … ${shortName(model)} hit the step cap — continuing the task (not done yet)${C.reset}`);
+            statusLine(`\n${C.dim}  … ${shortName(model)} hit the step cap — continuing the task (not done yet)${C.reset}`);
         },
       };
       // Non-orchestrated coder turn: fold the relevant project-brain notes into the input.
