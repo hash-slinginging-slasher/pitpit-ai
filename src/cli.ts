@@ -85,6 +85,12 @@ const C = {
   red: '\x1b[91m', // action-required (fixed; not themed)
 };
 
+// Orchestrator accent = Codigo brand pink (#c1447e). Rendered as a filled "pill" badge
+// via truecolor bg + white fg with padding. Rounded caps would need powerline glyphs
+// from a Nerd Font (terminal font is Consolas), so we use a solid block. Not themed —
+// the orchestrator keeps its brand color across themes.
+const orchPill = (text: string): string => `\x1b[48;2;193;68;126m\x1b[38;2;255;255;255m${C.bold} ${text} ${C.reset}`;
+
 /** Named color themes: each maps the five accent slots. */
 const THEMES: Record<string, Pick<typeof C, 'cyan' | 'green' | 'yellow' | 'gray' | 'magenta'>> = {
   default: { cyan: '\x1b[36m', green: '\x1b[32m', yellow: '\x1b[33m', gray: '\x1b[90m', magenta: '\x1b[35m' },
@@ -390,12 +396,11 @@ async function main() {
 
   const promptText = () => {
     // When an orchestrator is configured, normal input goes to the conversational
-    // orchestrator (it delegates to the coder chain), so label the prompt accordingly
-    // in magenta — matching the orchestrator's ▣ marker elsewhere. Otherwise show the
-    // active coder (cyan), which is who you're actually talking to.
+    // orchestrator (it delegates to the coder chain), so label the prompt as a pink
+    // pill badge. Otherwise show the active coder (cyan), who you talk to directly.
     const orch = readAgents().orchestrator;
     if (orch.length) {
-      return `${C.magenta}orchestrator (${shortName(orch[0])})${C.reset} ${C.green}>${C.reset} `;
+      return `${orchPill(`orchestrator (${shortName(orch[0])})`)} ${C.green}>${C.reset} `;
     }
     const label = shortName(chain[activeIndex] ?? chain[0] ?? '');
     const pos = chain.length > 1 && activeIndex > 0 ? `${C.dim}[coder ${activeIndex + 1}]${C.reset} ` : '';
