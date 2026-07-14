@@ -558,6 +558,36 @@
         menu.style.top = Math.min(y, window.innerHeight - r.height - 6) + "px";
         ctxMenuEl = menu;
       }
+
+      // Right-click menu for a project in the sidebar.
+      async function openInExplorer(path) {
+        try {
+          const r = await (await fetch("/api/open-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) })).json();
+          if (!r.ok) alert("Couldn't open folder: " + (r.error || "unknown error"));
+        } catch (e) { alert("Couldn't open folder: " + e.message); }
+      }
+      function showProjectMenu(x, y, name, path) {
+        hideTermMenu();
+        const menu = document.createElement("div");
+        menu.className = "ctxmenu";
+        const item = (label, onClick, danger) => {
+          const b = document.createElement("button");
+          b.innerHTML = `<span>${label}</span>`;
+          if (danger) b.style.color = "var(--danger, #f77)";
+          b.onclick = () => { hideTermMenu(); onClick(); };
+          return b;
+        };
+        menu.appendChild(item("Open in Explorer", () => openInExplorer(path)));
+        menu.appendChild(item("Copy path", () => { navigator.clipboard?.writeText(path).catch(() => {}); }));
+        menu.appendChild(document.createElement("hr"));
+        menu.appendChild(item("Remove project", () => removeProject(path, name), true));
+        document.body.appendChild(menu);
+        const r = menu.getBoundingClientRect();
+        menu.style.left = Math.min(x, window.innerWidth - r.width - 6) + "px";
+        menu.style.top = Math.min(y, window.innerHeight - r.height - 6) + "px";
+        ctxMenuEl = menu;
+      }
+
       // Dismiss on any outside interaction.
       document.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target)) hideTermMenu(); });
       document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTermMenu(); });
@@ -578,6 +608,7 @@
             d.dataset.path = path;
             d.innerHTML = `<span class="premove" title="Remove project">×</span>${esc(name)}${running} <span class="sub">${esc(path || "")}</span>`;
             d.onclick = () => selectProject(path);
+            d.addEventListener("contextmenu", (ev) => { ev.preventDefault(); showProjectMenu(ev.clientX, ev.clientY, name, path); });
             const rm = d.querySelector(".premove");
             if (rm) rm.onclick = (e) => { e.stopPropagation(); removeProject(path, name); };
             el.appendChild(d);

@@ -671,6 +671,31 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Open a project folder in the OS file manager (Explorer / Finder / xdg-open).
+    // Detached best-effort launch; the path must be an existing directory.
+    if (req.method === 'POST' && url.pathname === '/api/open-folder') {
+      const { path: rawPath } = await readBody(req);
+      if (!rawPath || typeof rawPath !== 'string') return json(res, 400, { error: 'no path' });
+      const abs = resolve(rawPath.trim());
+      if (!existsSync(abs)) return json(res, 400, { error: 'folder does not exist' });
+      if (!statSync(abs).isDirectory()) return json(res, 400, { error: 'not a directory' });
+      try {
+        // The path is passed as an argv element (not through a shell), so there is no
+        // injection surface. explorer.exe returns exit code 1 even on success, so we
+        // don't wait on / check the child's exit status.
+        if (process.platform === 'win32') {
+          spawn('explorer.exe', [abs], { detached: true, windowsHide: false, stdio: 'ignore' }).unref();
+        } else if (process.platform === 'darwin') {
+          spawn('open', [abs], { detached: true, stdio: 'ignore' }).unref();
+        } else {
+          spawn('xdg-open', [abs], { detached: true, stdio: 'ignore' }).unref();
+        }
+        return json(res, 200, { ok: true });
+      } catch (e: any) {
+        return json(res, 500, { error: e.message });
+      }
+    }
+
     // Create a new project folder (and register it if a DB is configured).
     if (req.method === 'POST' && url.pathname === '/api/projects/new') {
       const { path: rawPath } = await readBody(req);
