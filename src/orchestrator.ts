@@ -119,16 +119,27 @@ function parseReview(text: string): { status: 'done' | 'failed' | 'task-complete
   return { status, note: (noteM?.[1] ?? '').trim().slice(0, 200), next };
 }
 
-/** One-shot orchestrator call (no tools) — used for planning and review. */
+type Usage = { inputTokens: number; outputTokens: number };
+
+/** Accumulate a call's token usage into a running total (both fields optional/missing-safe). */
+function addUsage(acc: Usage, u?: { inputTokens?: number; outputTokens?: number }): void {
+  if (!u) return;
+  acc.inputTokens += u.inputTokens ?? 0;
+  acc.outputTokens += u.outputTokens ?? 0;
+}
+
+/** One-shot orchestrator call (no tools) — used for planning, review, and conversation.
+ * Returns the reply text AND the orchestrator model's token usage so callers can count it
+ * (previously the orchestrator's own tokens were dropped, showing "0 in / 0 out"). */
 async function orchestratorSay(
   config: AgentConfig,
   chain: string[],
   input: string | ChatMessage[],
   instructions: string,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<{ text: string; usage?: Usage }> {
   const res = await runAgentChain(config, chain, input, { noTools: true, instructions, signal });
-  return (res.text || '').trim();
+  return { text: (res.text || '').trim(), usage: res.usage ?? undefined };
 }
 
 function ledgerView(task: string, ledger: LedgerStep[]): string {
@@ -220,8 +231,9 @@ export async function runOrchestrated(
     let plan: string[] | null = null;
     try {
       const planInput = [map, planBrain, task].filter(Boolean).join('\n\n---\n\n');
-      const planText = await orchestratorSay(config, orchestratorChain, planInput, PLAN_INSTRUCTIONS, options?.signal);
-      plan = parsePlan(planText);
+      const planSaid = await orchestratorSay(config, orchestratorChain, planInput, PLAN_INSTRUCTIONS, options?.signal);
+      addUsage(usage, planSaid.usage);
+      plan = parsePlan(planSaid.text);
     } catch (err) {
       if (isAbortError(err, options?.signal)) throw err;
       // planning failed → fall through to a single-step plan (still resilient on coders)
@@ -312,8 +324,9 @@ export async function runOrchestrated(
         `${ledgerView(task, ledger)}\n\n` +
         `STEP JUST ATTEMPTED: ${i + 1}. ${step.title}\n` +
         `CODER RESULT:\n${(lastText || '(no output)').slice(0, 2000)}`;
-      const reviewText = await orchestratorSay(config, orchestratorChain, reviewInput, REVIEW_INSTRUCTIONS, options?.signal);
-      const review = parseReview(reviewText);
+      const reviewSaid = await orchestratorSay(config, orchestratorChain, reviewInput, REVIEW_INSTRUCTIONS, options?.signal);
+      addUsage(usage, reviewSaid.usage);
+      const review = parseReview(reviewSaid.text);
       // The coder returned (didn't throw), so the step ran; the review decides done vs failed.
       step.status = review.status === 'failed' ? 'failed' : 'done';
       if (review.note) step.note = review.note;
@@ -429,7 +442,9 @@ export async function runConversationalOrchestrator(
 
   for (let round = 0; round < maxRounds; round++) {
     abortCheck();
-    const reply = await orchestratorSay(config, orchestratorChain, messages, instructions, options?.signal);
+    const said = await orchestratorSay(config, orchestratorChain, messages, instructions, options?.signal);
+    addUsage(usage, said.usage);
+    const reply = said.text;
     const delegations = parseDelegations(reply);
     const speech = stripDelegations(reply);
     if (speech) emit({ type: 'text', delta: (round ? '\n\n' : '') + speech + '\n' });
