@@ -107,6 +107,11 @@
       }
       input[type="search"]:focus { outline: none; border-color: var(--accent); }
       label.free { color: var(--dim); font-size: 13px; user-select: none; }
+      select.sort {
+        padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
+        background: var(--panel); color: var(--text); font-size: 13px; cursor: pointer; flex: 0 0 auto;
+      }
+      select.sort:focus { outline: none; border-color: var(--accent); }
 
       main { padding: 16px 24px 60px; }
       .count { color: var(--dim); font-size: 12px; margin-bottom: 10px; }
@@ -124,6 +129,7 @@
       .id { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--accent); word-break: break-all; }
       .meta { color: var(--dim); font-size: 12px; margin: 8px 0; display: flex; gap: 10px; flex-wrap: wrap; }
       .tag-free { color: var(--good); font-weight: 600; }
+      .na { color: var(--dim); font-style: italic; opacity: 0.75; }
       .badge { border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; font-size: 11px; color: var(--dim); }
       .spacer { flex: 1; }
       button.add {
@@ -198,6 +204,13 @@
       </div>
       <div class="controls" style="padding-top: 0;">
         <input id="search" type="search" placeholder="Filter by name or id…" autocomplete="off" />
+        <select id="sortBy" class="sort" title="Sort models">
+          <option value="default">Sort: default</option>
+          <option value="ctx-desc">Context: high → low</option>
+          <option value="ctx-asc">Context: low → high</option>
+          <option value="name-asc">Name: A → Z</option>
+          <option value="price-asc">Price: low → high</option>
+        </select>
         <label class="free"><input type="checkbox" id="freeOnly" /> free only</label>
       </div>
     </header>
@@ -662,6 +675,13 @@
           if (!q) return true;
           return (m.id + " " + (m.name || "")).toLowerCase().includes(q);
         });
+        // Sort the filtered list. "default" keeps the source's original order.
+        const sortBy = $("sortBy").value;
+        const priceOf = (m) => (m.promptPrice || 0) + (m.completionPrice || 0);
+        if (sortBy === "ctx-desc") list.sort((a, b) => (b.context || 0) - (a.context || 0));
+        else if (sortBy === "ctx-asc") list.sort((a, b) => (a.context || 0) - (b.context || 0));
+        else if (sortBy === "name-asc") list.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+        else if (sortBy === "price-asc") list.sort((a, b) => priceOf(a) - priceOf(b));
         $("count").textContent = `${list.length} ${sourceDef().label} models${restrictive ? " for " + def.label : ""}`;
         if (!list.length && restrictive && !q) {
           const why = activeTab === "image" ? "that generate images (output an image)" : "that accept files (pdf / csv / xlsx)";
@@ -681,8 +701,8 @@
                 <div class="name">${m.name || m.id}</div>
                 <div class="id">${m.id}</div>
                 <div class="meta">
-                  <span>${ctx(m.context)}</span>
-                  ${isFree ? '<span class="tag-free">FREE</span>' : `<span>in ${price(m.promptPrice)}</span><span>out ${price(m.completionPrice)}</span>`}
+                  ${m.ctxUnknown ? '<span class="na">ctx n/a</span>' : `<span>${ctx(m.context)}</span>`}
+                  ${m.priceUnknown ? '<span class="na">price n/a</span>' : isFree ? '<span class="tag-free">FREE</span>' : `<span>in ${price(m.promptPrice)}</span><span>out ${price(m.completionPrice)}</span>`}
                   ${modBadges(m)}
                 </div>
                 <div class="spacer"></div>
@@ -999,6 +1019,7 @@
       $("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") saveSettings(); });
       $("search").addEventListener("input", renderGrid);
       $("freeOnly").addEventListener("change", renderGrid);
+      $("sortBy").addEventListener("change", renderGrid);
 
       // Add a model by id from the manual box, prefixed for the active source.
       function addManualModel() {

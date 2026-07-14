@@ -115,7 +115,16 @@ async function fetchNvidiaModels() {
   const r = await fetch(`${nvidiaBaseUrl()}/models`, { headers: { Authorization: `Bearer ${key}` } });
   if (!r.ok) throw new Error(`NVIDIA returned ${r.status}`);
   const body = (await r.json()) as { data: any[] };
-  return (body.data ?? []).map((m) => card(`nvidia-build/${m.id}`, { name: m.id, description: m.owned_by ? `owner: ${m.owned_by}` : '' }));
+  // NVIDIA's /v1/models list only returns id/owned_by — no context length or pricing —
+  // so flag those fields as unknown for the UI to render "n/a" rather than 0/FREE.
+  return (body.data ?? []).map((m) =>
+    card(`nvidia-build/${m.id}`, {
+      name: m.id,
+      description: m.owned_by ? `owner: ${m.owned_by}` : '',
+      ctxUnknown: true,
+      priceUnknown: true,
+    }),
+  );
 }
 
 /**
