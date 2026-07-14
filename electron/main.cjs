@@ -238,7 +238,7 @@ function buildMenu() {
 
 /** A lightweight "starting…" page so the window is responsive while the server boots
  * (Electron's own cold boot + first server transpile can take tens of seconds on Windows). */
-const SPLASH = 'data:text/html,' + encodeURIComponent(
+const SPLASH = 'data:text/html;charset=utf-8,' + encodeURIComponent(
   `<body style="margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#1a1a1a;color:#e8e8e8;font-family:sans-serif">
     <div style="width:34px;height:34px;border:3px solid #444;border-top-color:#8ab4ff;border-radius:50%;animation:spin 0.9s linear infinite"></div>
     <div style="opacity:.75">Starting Codigo…</div>
@@ -248,7 +248,7 @@ const SPLASH = 'data:text/html,' + encodeURIComponent(
 
 function errorPage(message) {
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  return 'data:text/html,' + encodeURIComponent(
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(
     `<body style="background:#1a1a1a;color:#e8e8e8;font-family:sans-serif;padding:30px"><h2>Could not start the Codigo server</h2><pre style="white-space:pre-wrap;color:#ffb4b4;font-family:Consolas,monospace">${esc(message)}</pre></body>`,
   );
 }
