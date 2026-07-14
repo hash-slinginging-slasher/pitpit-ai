@@ -389,6 +389,14 @@ async function main() {
   printIntro(hasContext);
 
   const promptText = () => {
+    // When an orchestrator is configured, normal input goes to the conversational
+    // orchestrator (it delegates to the coder chain), so label the prompt accordingly
+    // in magenta — matching the orchestrator's ▣ marker elsewhere. Otherwise show the
+    // active coder (cyan), which is who you're actually talking to.
+    const orch = readAgents().orchestrator;
+    if (orch.length) {
+      return `${C.magenta}orchestrator (${shortName(orch[0])})${C.reset} ${C.green}>${C.reset} `;
+    }
     const label = shortName(chain[activeIndex] ?? chain[0] ?? '');
     const pos = chain.length > 1 && activeIndex > 0 ? `${C.dim}[coder ${activeIndex + 1}]${C.reset} ` : '';
     return `${pos}${C.cyan}${label}${C.reset} ${C.green}>${C.reset} `;
@@ -400,22 +408,34 @@ async function main() {
   // file mid-write (partial/empty JSON). So we debounce and ignore empty reads,
   // announcing only a genuine, settled change of the active model.
   let watchTimer: ReturnType<typeof setTimeout> | null = null;
+  let orchLabel = readAgents().orchestrator[0] ?? '';
   const watcher = watch(CONFIG_PATH, () => {
     if (watchTimer) return;
     watchTimer = setTimeout(() => {
       watchTimer = null;
       const next = readCoderChain();
-      if (!next.length) return; // mid-write / cleared — keep the current chain
-      if (next.join('|') === chain.join('|')) return; // no real change
+      const nextOrch = readAgents().orchestrator[0] ?? '';
+      const coderChanged = next.length > 0 && next.join('|') !== chain.join('|');
+      const orchChanged = nextOrch !== orchLabel;
+      // A mid-write can momentarily clear the coder chain; keep the current one and only
+      // react to a genuine, settled change of either the coder chain or the orchestrator.
+      if (!coderChanged && !orchChanged) return;
       const prevActive = chain[activeIndex];
-      chain = next;
-      clampActive();
+      if (coderChanged) {
+        chain = next;
+        clampActive();
+      }
+      orchLabel = nextOrch;
       if (turnActive) return; // update silently mid-turn; the next prompt reflects it
       const nowActive = chain[activeIndex];
-      if (nowActive && nowActive !== prevActive) {
+      if (coderChanged && nowActive && nowActive !== prevActive) {
         process.stdout.write(
           `\n${C.magenta}>> coder model -> ${shortName(nowActive)}${C.reset} ${C.dim}(set from UI)${C.reset}\n`,
         );
+      }
+      if (orchChanged) {
+        const msg = nextOrch ? `orchestrator -> ${shortName(nextOrch)}` : 'orchestrator removed — talking to the coder chain';
+        process.stdout.write(`\n${C.magenta}>> ${msg}${C.reset} ${C.dim}(set from UI)${C.reset}\n`);
       }
       rl.setPrompt(promptText());
       rl.prompt(true);
