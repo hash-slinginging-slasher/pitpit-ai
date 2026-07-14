@@ -207,13 +207,19 @@ async function runOpenRouterModel(
 ) {
   const client = new OpenRouter({ apiKey });
 
-  const result = client.callModel({
-    model,
-    instructions: (options?.instructions ?? config.systemPrompt).replace('{cwd}', process.cwd()),
-    input: input as string | Item[],
-    tools: options?.noTools ? undefined : tools,
-    stopWhen: [stepCountIs(config.maxSteps), maxCost(config.maxCost)],
-  });
+  const result = client.callModel(
+    {
+      model,
+      instructions: (options?.instructions ?? config.systemPrompt).replace('{cwd}', process.cwd()),
+      input: input as string | Item[],
+      tools: options?.noTools ? undefined : tools,
+      stopWhen: [stepCountIs(config.maxSteps), maxCost(config.maxCost)],
+    },
+    // Wire Esc/abort into the SDK's underlying HTTP request so cancelling actually tears
+    // the request down. Without this the stream only stops being *consumed* on abort — a
+    // model that's slow to emit its first item would leave the turn hanging on "stopping…".
+    { signal: options?.signal },
+  );
 
   let toolSteps = 0; // count tool calls to tell "finished" from "hit the step cap"
   if (options?.onEvent) {
@@ -224,7 +230,8 @@ async function runOpenRouterModel(
     const textByItem = new Map<string, number>();
     const callNames = new Map<string, string>();
 
-    for await (const item of result.getItemsStream()) {
+    try {
+      for await (const item of result.getItemsStream()) {
       if (options?.signal?.aborted) break;
       if (item.type === 'message') {
         const text =
@@ -262,6 +269,11 @@ async function runOpenRouterModel(
         const text = item.summary?.map((s: { text: string }) => s.text).join('') ?? '';
         if (text) options.onEvent({ type: 'reasoning', delta: text });
       }
+      }
+    } catch (err) {
+      // A mid-stream abort rejects the async iterator; treat it as a clean cancel and fall
+      // through to the abort handling below. Re-throw any genuine (non-abort) error.
+      if (!isAbortError(err, options?.signal)) throw err;
     }
   }
 
